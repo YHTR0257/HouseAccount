@@ -209,3 +209,43 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# HouseAccount - 家計簿システム関連
+# データベースファイル
+*.db
+*.sqlite
+*.sqlite3
+
+# PostgreSQLデータディレクトリ
+data/postgres/
+pgdata/
+
+# CSV処理済みファイル
+data/confirmed/
+data/uploads/
+data/temp/
+
+# 設定ファイル（機密情報含む可能性）
+.env.local
+config/database.yml
+config/secrets.yml
+
+# バックアップファイル
+backup/
+*.bak
+*.backup
+
+# ログファイル
+logs/
+*.log
+accounting.log
+
+# 一時ファイル
+temp/
+tmp/
+*.tmp
+
+# 出力ファイル
+output/
+reports/
+exports/
