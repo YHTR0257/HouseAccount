@@ -3,23 +3,40 @@ services:
     image: postgres:14-alpine
     container_name: household_db
     restart: unless-stopped
+    cpus: '0.5'
     environment:
       POSTGRES_DB: household
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: password
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=C"
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    command: >
+      postgres
+      -c shared_buffers=128MB
+      -c effective_cache_size=256MB
+      -c maintenance_work_mem=32MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=4MB
+      -c min_wal_size=1GB
+      -c max_wal_size=4GB
 
   app:
     build: ./docker
     container_name: household_app
     restart: unless-stopped
     user: superset
+    cpus: '1.0'
     environment:
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/household
       - PYTHONPATH=/workspace/src
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY}
     ports:
       - "8088:8088"

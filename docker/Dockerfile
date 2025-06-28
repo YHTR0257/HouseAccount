@@ -2,21 +2,18 @@ FROM apache/superset:latest
 
 USER root
 
-# 必要パッケージのインストール
+# 必要最小限のパッケージのみインストール
 RUN apt-get update && apt-get install -y \
     fonts-noto-cjk \
     netcat-openbsd \
     curl \
     git \
-    sudo \
+    openssh-client \
     && rm -rf /var/lib/apt/lists/*
 
-# sudoインストール後にsupersetユーザーにsudo権限を付与
-RUN echo "superset ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/superset \
-    && chmod 0440 /etc/sudoers.d/superset
-
-# Pythonパッケージのインストール
-RUN pip install --no-cache-dir psycopg2-binary pandas scikit-learn python-dotenv gunicorn
+# requirements.txtをコピーしてPythonパッケージのインストール
+COPY requirements.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt && rm /tmp/requirements.txt
 
 # Node.js LTSのインストール（Claude Code用）
 RUN curl -fsSL https://deb.nodesource.com/setup_lts.x | bash - \
@@ -32,8 +29,9 @@ RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
 # Dev Container内かどうかの判定\n\
-if [ "$VSCODE_INJECTION" = "1" ] || [ -n "$REMOTE_CONTAINERS" ]; then\n\
+if [ "$VSCODE_INJECTION" = "1" ] || [ -n "$REMOTE_CONTAINERS" ] || [ -n "$CODESPACES" ]; then\n\
     echo "🔧 Running in Dev Container mode"\n\
+    export PYTHONPATH=/workspace/src\n\
     exec sleep infinity\n\
 fi\n\
 \n\
@@ -62,14 +60,14 @@ superset init\n\
 \n\
 echo "家計簿システム初期化中..."\n\
 cd /workspace\n\
-if [ -f "src/main.py" ]; then\n\
-    python src/main.py init\n\
+if python -m src.main init; then\n\
+    echo "家計簿システム初期化完了"\n\
 else\n\
-    echo "Warning: src/main.py not found, skipping household system initialization"\n\
+    echo "Warning: 家計簿システム初期化に失敗しました。Supersetのみ起動します。"\n\
 fi\n\
 \n\
 echo "Superset起動中..."\n\
-gunicorn --bind 0.0.0.0:8088 --workers 2 --timeout 60 "superset.app:create_app()"' > /app/start.sh \
+gunicorn --bind 0.0.0.0:8088 --workers 1 --timeout 60 "superset.app:create_app()"' > /app/start.sh \
     && chmod +x /app/start.sh
 
 USER superset
