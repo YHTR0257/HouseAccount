@@ -1,0 +1,202 @@
+{
+  "Cash": {
+    "id": "100",
+    "description": "財布"
+  },
+  "UFJ": {
+    "id": "101",
+    "description": "UFJ銀行にある現金"
+  },
+  "SBI": {
+    "id": "102",
+    "description": "SBI銀行にある現金"
+  },
+  "Other": {
+    "id": "109",
+    "description": "その他"
+  },
+  "SBISTOCKS": {
+    "id": "110",
+    "description": "SBI証券にあるもの"
+  },
+  "SBIStocksNISA": {
+    "id": "111",
+    "description": "SBI証券NISA口座にあるもの"
+  },
+  "AUKABU": {
+    "id": "112",
+    "description": "auカブコムにある金融資産"
+  },
+  "Other assets": {
+    "id": "119",
+    "description": "その他の資産"
+  },
+  "Borrowings": {
+    "id": "130",
+    "description": "貸付金"
+  },
+  "Credit Card Debt": {
+    "id": "200",
+    "description": "クレジットカード債務"
+  },
+  "Short-term Loans": {
+    "id": "210",
+    "description": "短期借入金"
+  },
+  "Payables": {
+    "id": "220",
+    "description": "未払い金"
+  },
+  "Mortgage Loan": {
+    "id": "230",
+    "description": "住宅ローン"
+  },
+  "Long-term Loans": {
+    "id": "240",
+    "description": "長期借入金"
+  },
+  "Deposit": {
+    "id": "280",
+    "description": "預り金"
+  },
+  "Receivables": {
+    "id": "290",
+    "description": "立替金"
+  },
+  "Retained Earnings": {
+    "id": "300",
+    "description": "繰越利益"
+  },
+  "Owner Equity": {
+    "id": "310",
+    "description": "所有者資本"
+  },
+  "Reserves": {
+    "id": "320",
+    "description": "引当金"
+  },
+  "Salary": {
+    "id": "400",
+    "description": "給与収入"
+  },
+  "Investment Income": {
+    "id": "410",
+    "description": "投資収入"
+  },
+  "Other Income": {
+    "id": "490",
+    "description": "その他の収入"
+  },
+  "Groceries": {
+    "id": "500",
+    "description": "食費"
+  },
+  "Snacks": {
+    "id": "501",
+    "description": "おやつ"
+  },
+  "Consumables": {
+    "id": "510",
+    "description": "消耗品"
+  },
+  "Rent/Mortgage": {
+    "id": "511",
+    "description": "住宅費"
+  },
+  "Utilities": {
+    "id": "512",
+    "description": "光熱費"
+  },
+  "Household Goods": {
+    "id": "513",
+    "description": "日用品費"
+  },
+  "Communication": {
+    "id": "520",
+    "description": "通信費"
+  },
+  "Transportation": {
+    "id": "521",
+    "description": "交通費"
+  },
+  "Entertainment": {
+    "id": "530",
+    "description": "娯楽費"
+  },
+  "Dining Out": {
+    "id": "531",
+    "description": "外食費"
+  },
+  "Equipment": {
+    "id": "532",
+    "description": "道具類"
+  },
+  "Medical Expenses": {
+    "id": "540",
+    "description": "医療費"
+  },
+  "Automobile Expenses": {
+    "id": "541",
+    "description": "自動車費"
+  },
+  "Clothing": {
+    "id": "542",
+    "description": "被服費"
+  },
+  "Social Expenses": {
+    "id": "550",
+    "description": "交際費"
+  },
+  "Social Gatherings": {
+    "id": "551",
+    "description": "飲み会代"
+  },
+  "Presents": {
+    "id": "552",
+    "description": "プレゼント代"
+  },
+  "Educational Materials": {
+    "id": "560",
+    "description": "教材費"
+  },
+  "Tuition": {
+    "id": "561",
+    "description": "学費"
+  },
+  "Taxes": {
+    "id": "570",
+    "description": "税金"
+  },
+  "Social Insurance": {
+    "id": "571",
+    "description": "社会保険料"
+  },
+  "Other Insurance": {
+    "id": "572",
+    "description": "その他保険料"
+  },
+  "Self-Investment": {
+    "id": "580",
+    "description": "自己投資"
+  },
+  "Personal Development": {
+    "id": "581",
+    "description": "自己啓発"
+  },
+  "Special Expenses": {
+    "id": "590",
+    "description": "特別費"
+  },
+  "Miscellaneous Expenses": {
+    "id": "598",
+    "description": "雑費"
+  },
+  "Adjustments": {
+    "id": "599",
+    "description": "帳簿調整"
+  },
+  "Profit and Loss": {
+    "id": "600",
+    "description": "損益"
+  }
+}
