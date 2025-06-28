@@ -1,7 +1,7 @@
 import sys
 from pathlib import Path
 from .models import DatabaseManager
-from .processor import JournalProcessor
+from .processor import CSVProcessor
 
 
 def main():
@@ -17,10 +17,10 @@ def main():
         print("データベース初期化完了")
 
     elif command == 'process' and len(sys.argv) > 2:
-        processor = JournalProcessor()
+        processor = CSVProcessor()
         file_path = sys.argv[2]
 
-        count = processor.process_csv(file_path)
+        count = processor.process_csv_for_database(file_path)
         print(f"処理完了: {count}件の仕訳を読み込み")
 
         # セット検証
@@ -35,24 +35,24 @@ def main():
             print(processor.get_transaction_summary())
 
     elif command == 'confirm':
-        processor = JournalProcessor()
+        processor = CSVProcessor()
         if processor.confirm_entries():
             print("仕訳確定完了")
         else:
             print("確定処理中止（検証エラー）")
 
     elif command == 'trial':
-        processor = JournalProcessor()
+        processor = CSVProcessor()
         print("試算表:")
         print(processor.get_trial_balance())
 
     elif command == 'cashflow':
-        processor = JournalProcessor()
+        processor = CSVProcessor()
         print("キャッシュフロー:")
         print(processor.get_cashflow_analysis())
 
     elif command == 'summary':
-        processor = JournalProcessor()
+        processor = CSVProcessor()
         print("取引集計:")
         print(processor.get_transaction_summary())
 
