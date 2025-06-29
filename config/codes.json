@@ -131,6 +131,10 @@
     "id": "532",
     "description": "道具類"
   },
+  "Trips": {
+    "id": "533",
+    "description": "旅行費"
+  },
   "Medical Expenses": {
     "id": "540",
     "description": "医療費"

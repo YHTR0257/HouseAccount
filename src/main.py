@@ -6,10 +6,14 @@ from .processor import CSVProcessor
 
 def main():
     if len(sys.argv) < 2:
-        print("使用方法: python main.py [init|process|confirm|trial|cashflow|summary] [args...]")
+        print("使用方法: python main.py [init|process|process-ufj|confirm|trial|cashflow|summary|train] [args...]")
         print("  process オプション:")
         print("    --no-clear    : temp_journalテーブルをクリアしない")
         print("    --no-duplicates : 重複チェックを行わない")
+        print("  process-ufj オプション:")
+        print("    python main.py process-ufj <ファイルパス> [--no-clear] [--no-duplicates]")
+        print("  train:")
+        print("    python main.py train  : 機械学習モデルの学習（subject_code + remarks）")
         return
 
     command = sys.argv[1]
@@ -62,6 +66,40 @@ def main():
         processor = CSVProcessor()
         print("取引集計:")
         print(processor.get_transaction_summary())
+
+    elif command == 'process-ufj' and len(sys.argv) > 2:
+        processor = CSVProcessor()
+        file_path = sys.argv[2]
+        
+        # オプション解析
+        clear_temp = '--no-clear' not in sys.argv
+        check_duplicates = '--no-duplicates' not in sys.argv
+
+        count = processor.process_bank_csv(file_path, 'ufj', clear_temp=clear_temp, check_duplicates=check_duplicates)
+        print(f"UFJ CSV処理完了: {count}件の仕訳を読み込み")
+
+        # セット検証
+        is_valid, message, errors = processor.validate_sets()
+        print(f"検証結果: {message}")
+        if errors is not None:
+            print("不平衡セット:")
+            print(errors)
+
+        if is_valid:
+            print("\n取引集計:")
+            print(processor.get_transaction_summary())
+
+    elif command == 'train':
+        from .bank_predictor import BankPredictor
+        predictor = BankPredictor()
+        success = predictor.train_model()
+        
+        if success:
+            print("機械学習モデル学習完了")
+            print("  - subject_code予測モデル: debit/credit科目コード予測")
+            print("  - remarks予測モデル: 備考テキスト予測")
+        else:
+            print("機械学習モデル学習失敗: 学習データが不足している可能性があります")
 
     else:
         print("無効なコマンドです")

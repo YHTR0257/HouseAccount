@@ -1,0 +1,24 @@
+date:
+  string: "日付"
+  name: "date"
+abstruct:
+  string: "摘要"
+  name: "abstruct"
+remarks:
+  string: "摘要内容"
+  name: "remarks"
+out:
+  string: "支払い金額"
+  name: "out"
+in:
+  string: "預かり金額"
+  name: "in"
+balance:
+  string: "差引残高"
+  name: "balance"
+memo:
+  string: "メモ"
+  name: "memo"
+inout:
+  string: "入払区分"
+  name: "inout"

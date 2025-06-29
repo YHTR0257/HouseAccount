@@ -1,0 +1,6 @@
+#!/bin/bash
+# HouseAccount - Unix/Linux/Mac用シェルスクリプト
+# 使用例: ./ha process data/sample.csv
+
+cd "$(dirname "$0")/.."
+python scripts/houseaccount.py "$@"

@@ -1,0 +1,18 @@
+date:
+  string: "日付"
+  name: "date"
+abstruct:
+  string: "内容"
+  name: "abstruct"
+out:
+  string: "出金金額(円)"
+  name: "out"
+in:
+  string: "入金金額(円)"
+  name: "in"
+balance:
+  string: "残高(円)"
+  name: "balance"
+memo:
+  string: "メモ"
+  name: "memo"
