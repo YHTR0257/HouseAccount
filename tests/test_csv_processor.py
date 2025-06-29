@@ -68,18 +68,27 @@ class TestCSVProcessor:
     def test_process_csv_for_database_basic(self, processor, temp_csv_file, mock_db_manager):
         """基本的なCSV処理テスト"""
         with patch('pandas.DataFrame.to_sql') as mock_to_sql:
-            result = processor.process_csv_for_database(temp_csv_file)
-            
-            # 処理行数の確認
-            assert result == 9
-            
-            # データベース保存が呼ばれたことを確認
-            mock_to_sql.assert_called_once_with(
-                'temp_journal', 
-                mock_db_manager.get_connection.return_value.__enter__.return_value,
-                if_exists='append', 
-                index=False
-            )
+            with patch('pandas.read_sql') as mock_read_sql:
+                # 重複チェックのモック（重複なし）
+                mock_read_sql.return_value = pd.DataFrame({'count': [0]})
+                
+                # conn.execute().rowcountのモック
+                mock_execute_result = MagicMock()
+                mock_execute_result.rowcount = 0
+                mock_db_manager.get_connection.return_value.__enter__.return_value.execute.return_value = mock_execute_result
+                
+                result = processor.process_csv_for_database(temp_csv_file)
+                
+                # 処理行数の確認
+                assert result == 9
+                
+                # データベース保存が呼ばれたことを確認
+                mock_to_sql.assert_called_once_with(
+                    'temp_journal', 
+                    mock_db_manager.get_connection.return_value.__enter__.return_value,
+                    if_exists='append', 
+                    index=False
+                )
 
     def test_process_csv_for_database_data_transformation(self, processor, temp_csv_file):
         """CSV処理時のデータ変換テスト"""
@@ -92,8 +101,11 @@ class TestCSVProcessor:
             return original_to_sql(self, *args, **kwargs)
         
         with patch('pandas.DataFrame.to_sql', capture_df):
-            with patch.object(processor.db, 'get_connection'):
-                processor.process_csv_for_database(temp_csv_file)
+            with patch('pandas.read_sql') as mock_read_sql:
+                # 重複チェックのモック（重複なし）
+                mock_read_sql.return_value = pd.DataFrame({'count': [0]})
+                with patch.object(processor.db, 'get_connection'):
+                    processor.process_csv_for_database(temp_csv_file)
         
         # データ変換の確認
         assert captured_df is not None
@@ -104,9 +116,13 @@ class TestCSVProcessor:
         assert 'month' in captured_df.columns
         assert 'subject' in captured_df.columns
         
-        # SetIDとEntryIDの生成確認
+        # SetIDとEntryIDの生成確認（3桁）
         assert captured_df['set_id'].notna().all()
         assert captured_df['entry_id'].notna().all()
+        # SetIDが3桁形式になっているかチェック
+        for set_id in captured_df['set_id'].unique():
+            # YYYYMMDD_XXX 形式の確認
+            assert len(set_id.split('_')[1]) == 3
 
     def test_validate_sets_balanced(self, processor, mock_db_manager):
         """平衡セット検証テスト"""
@@ -347,12 +363,16 @@ class TestCSVProcessor:
                 assert captured_df is not None
                 assert 'entry_id' in captured_df.columns
                 
-                # SetIDごとにEntryIDが連番で生成されることを確認
+                # SetIDごとにEntryIDが連番で生成されることを確認（3桁）
                 for set_id in captured_df['set_id'].unique():
                     set_entries = captured_df[captured_df['set_id'] == set_id]
                     entry_ids = sorted(set_entries['entry_id'].tolist())
                     # EntryIDが適切に生成されていることを確認
                     assert len(entry_ids) >= 1
+                    # 3桁の連番になっているかチェック
+                    for i, entry_id in enumerate(entry_ids):
+                        expected_suffix = f"_{str(i).zfill(3)}"
+                        assert entry_id.endswith(expected_suffix)
                     
             finally:
                 os.unlink(f.name)

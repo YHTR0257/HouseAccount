@@ -7,6 +7,9 @@ from .processor import CSVProcessor
 def main():
     if len(sys.argv) < 2:
         print("使用方法: python main.py [init|process|confirm|trial|cashflow|summary] [args...]")
+        print("  process オプション:")
+        print("    --no-clear    : temp_journalテーブルをクリアしない")
+        print("    --no-duplicates : 重複チェックを行わない")
         return
 
     command = sys.argv[1]
@@ -19,8 +22,12 @@ def main():
     elif command == 'process' and len(sys.argv) > 2:
         processor = CSVProcessor()
         file_path = sys.argv[2]
+        
+        # オプション解析
+        clear_temp = '--no-clear' not in sys.argv
+        check_duplicates = '--no-duplicates' not in sys.argv
 
-        count = processor.process_csv_for_database(file_path)
+        count = processor.process_csv_for_database(file_path, clear_temp=clear_temp, check_duplicates=check_duplicates)
         print(f"処理完了: {count}件の仕訳を読み込み")
 
         # セット検証

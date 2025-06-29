@@ -4,6 +4,7 @@ from pathlib import Path
 from sqlalchemy import text
 from typing import Optional, Tuple
 from .models import DatabaseManager
+import os
 from .config import SUBJECT_CODES, TEMP_UPLOADS_DIR, CONFIRMED_DIR, BALANCE_TOLERANCE
 
 class CSVProcessor:
@@ -15,19 +16,79 @@ class CSVProcessor:
         self.db: DatabaseManager = db_manager or DatabaseManager()
 
 
-    def process_csv_for_database(self, file_path: str) -> int:
+    def process_csv_for_database(self, file_path: str, clear_temp: bool = True, check_duplicates: bool = True) -> int:
         """CSV処理（データベース保存用 - 旧JournalProcessor機能）
         
         Args:
             file_path: 処理対象のCSVファイルパス
+            clear_temp: 処理前にtemp_journalテーブルをクリアするか
+            check_duplicates: 重複ファイルのチェックを行うか
             
         Returns:
             処理した行数
         """
+        # ファイル存在確認
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"ファイルが見つかりません: {file_path}")
+        
+        source_filename = Path(file_path).name
+        
+        # 重複チェック
+        if check_duplicates:
+            with self.db.get_connection() as conn:
+                existing_count = pd.read_sql(
+                    text("SELECT COUNT(*) as count FROM temp_journal WHERE source_file = :filename"),
+                    conn,
+                    params={'filename': source_filename}
+                ).iloc[0]['count']
+                
+                if existing_count > 0:
+                    print(f"警告: ファイル '{source_filename}' は既に処理済みです（{existing_count}行）")
+                    if not clear_temp:
+                        print("重複処理をスキップします。clear_temp=Trueで強制処理可能です。")
+                        return 0
+        
+        # temp_journalテーブルクリア
+        if clear_temp:
+            with self.db.get_connection() as conn:
+                deleted_count = conn.execute(text("DELETE FROM temp_journal")).rowcount
+                if deleted_count > 0:
+                    print(f"temp_journalテーブルをクリアしました（{deleted_count}行削除）")
+        
         df = pd.read_csv(file_path)
 
-        # データ型変換
-        df['Date'] = pd.to_datetime(df['Date'])
+        # データ型変換 - 複数の日付形式に対応
+        def parse_date_flexible(date_str: str) -> pd.Timestamp:
+            """YYYYMMDD形式とYYYY-MM-DD形式の両方に対応した日付パース"""
+            if pd.isna(date_str):
+                return pd.NaT
+            
+            date_str = str(date_str).strip()
+            
+            # YYYYMMDD形式（8桁）の場合
+            if len(date_str) == 8 and date_str.isdigit():
+                try:
+                    return pd.to_datetime(date_str, format='%Y%m%d')
+                except:
+                    pass
+            
+            # YYYY-MM-DD形式やその他の一般的な形式
+            try:
+                return pd.to_datetime(date_str)
+            except:
+                # パースできない場合はNaTを返す
+                return pd.NaT
+        
+        df['Date'] = df['Date'].apply(parse_date_flexible)
+        
+        # 日付パースに失敗した行をチェック
+        invalid_dates = df[df['Date'].isna()]
+        if len(invalid_dates) > 0:
+            print(f"警告: {len(invalid_dates)}行の日付をパースできませんでした")
+            print(invalid_dates[['Date']].head())
+            # 無効な日付の行を除外
+            df = df.dropna(subset=['Date'])
+        
         df['Year'] = df['Date'].dt.year
         df['Month'] = df['Date'].dt.month
         
@@ -40,18 +101,20 @@ class CSVProcessor:
         # SetIDの処理
         if 'SetID' in df.columns:
             # 既存のSetIDを使用し、Date + SetIDの形式に変換
-            df['SetID'] = df['Date'].dt.strftime('%Y%m%d') + '_' + df['SetID'].astype(str).str.zfill(2)
+            df['SetID'] = df['Date'].dt.strftime('%Y%m%d') + '_' + df['SetID'].astype(str).str.zfill(3)
         else:
-            # SetIDが存在しない場合は従来通り生成
-            df['SetID'] = df['Date'].dt.strftime('%Y%m%d') + '_' + df['Remarks'].str.extract(r'(\d+)$')[0].fillna('00')
+            # SetIDが存在しない場合は従来通り生成（3桁）
+            df['SetID'] = df['Date'].dt.strftime('%Y%m%d') + '_' + df['Remarks'].str.extract(r'(\d+)$')[0].fillna('000').str.zfill(3)
         
         # EntryIDの生成（SetID + 連番）
-        df['EntryID'] = df.groupby('SetID').cumcount().astype(str).str.zfill(2)
+        df['EntryID'] = df.groupby('SetID').cumcount().astype(str).str.zfill(3)
         df['EntryID'] = df['SetID'].astype(str) + '_' + df['EntryID']
 
         # 科目名の自動変換
         df['Subject'] = df['SubjectCode'].map(SUBJECT_CODES)
         df['source_file'] = Path(file_path).name
+        # remarksを全て小文字に変換し、不要な空白を削除
+        df['Remarks'] = df['Remarks'].str.lower()
 
         # 不要な列を削除
         if 'ID' in df.columns:

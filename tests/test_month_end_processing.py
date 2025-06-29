@@ -70,8 +70,8 @@ class TestMonthEndProcessing:
         # 既存SetIDが日付形式で変換されているか確認
         carry_over_entries = captured_df[captured_df['remarks'].str.contains('Carry over')]
         assert len(carry_over_entries) > 0
-        # SetID 99 -> 20240301_99 のような形式になっているはず
-        assert carry_over_entries['set_id'].iloc[0].endswith('_99')
+        # SetID 99 -> 20240301_099 のような形式になっているはず（3桁）
+        assert carry_over_entries['set_id'].iloc[0].endswith('_099')
         
         # EntryIDが適切に生成されているか確認
         assert 'entry_id' in captured_df.columns
@@ -82,9 +82,9 @@ class TestMonthEndProcessing:
             set_entries = captured_df[captured_df['set_id'] == set_id].sort_values('entry_id')
             entry_ids = set_entries['entry_id'].tolist()
             assert len(entry_ids) >= 1
-            # EntryIDが SetID + '_' + 連番 の形式になっているか確認
+            # EntryIDが SetID + '_' + 連番 の形式になっているか確認（3桁）
             for i, entry_id in enumerate(entry_ids):
-                expected_suffix = f"_{str(i).zfill(2)}"
+                expected_suffix = f"_{str(i).zfill(3)}"
                 assert entry_id.endswith(expected_suffix)
 
     def test_monthly_aggregation_logic(self, processor):
