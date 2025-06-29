@@ -1,9 +1,13 @@
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Connection
+from sqlalchemy.engine.mock import MockConnection
 from .config import DATABASE_URL
+from typing import Union
+from sqlalchemy.engine import Engine
 
 class DatabaseManager:
     def __init__(self):
-        self.engine = create_engine(DATABASE_URL)
+        self.engine: Engine = create_engine(DATABASE_URL)
 
     def init_tables(self):
         """テーブル初期化"""
@@ -86,5 +90,6 @@ class DatabaseManager:
 
             print("データベーステーブルとビューを作成しました")
 
-    def get_connection(self):
+    def get_connection(self) -> Connection:
+        """データベース接続を取得"""
         return self.engine.connect()
