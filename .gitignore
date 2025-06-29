@@ -225,6 +225,7 @@ pgdata/
 data/confirmed/
 data/uploads/
 data/temp/
+data/train/
 
 # 設定ファイル（機密情報含む可能性）
 .env.local
