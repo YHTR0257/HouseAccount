@@ -5,3 +5,6 @@ python-dotenv
 gunicorn
 pillow
 numpy
+pytest
+pytest-cov
+sqlalchemy

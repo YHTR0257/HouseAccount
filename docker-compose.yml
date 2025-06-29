@@ -31,19 +31,23 @@ services:
     build: ./docker
     container_name: household_app
     restart: unless-stopped
-    user: superset
+    user: superset  # 元に戻す
     cpus: '1.0'
     environment:
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/household
-      - PYTHONPATH=/workspace/src
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - PYTHONPATH=/app/src
       - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY}
     ports:
       - "8088:8088"
     depends_on:
       - postgres
     volumes:
-      - .:/workspace
-      - ./data:/workspace/data
-      - ./src:/workspace/src
-    working_dir: /workspace
+      - .:/app
+      - ./data:/app/data
+      - ./src:/app/src
+      - superset-vscode:/app/superset_home/.vscode-server  # VS Code Server専用
+    working_dir: /app
+    command: ["sleep", "infinity"]
+
+volumes:
+  superset-vscode:
