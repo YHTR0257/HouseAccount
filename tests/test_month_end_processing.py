@@ -58,8 +58,10 @@ class TestMonthEndProcessing:
             return original_to_sql(self, *args, **kwargs)
         
         with patch('pandas.DataFrame.to_sql', capture_df):
-            with patch.object(processor.db, 'get_connection'):
-                processor.process_csv_for_database(temp_financial_csv)
+            with patch('pandas.read_sql') as mock_read_sql:
+                mock_read_sql.return_value = pd.DataFrame({'count': [0]})
+                with patch.object(processor.db, 'get_connection'):
+                    processor.process_csv_for_database(temp_financial_csv)
         
         assert captured_df is not None
         
@@ -164,8 +166,10 @@ class TestMonthEndProcessing:
         # ステップ1: CSV処理
         with patch.object(processor.db, 'get_connection'):
             with patch('pandas.DataFrame.to_sql'):
-                processed_count = processor.process_csv_for_database(temp_financial_csv)
-                assert processed_count > 0
+                with patch('pandas.read_sql') as mock_read_sql:
+                    mock_read_sql.return_value = pd.DataFrame({'count': [0]})
+                    processed_count = processor.process_csv_for_database(temp_financial_csv)
+                    assert processed_count > 0
 
         # ステップ2: セット検証
         with patch.object(processor, 'validate_sets') as mock_validate:
@@ -268,11 +272,13 @@ class TestMonthEndProcessing:
                 with patch.object(processor.db, 'get_connection') as mock_get_conn:
                     mock_get_conn.return_value = mock_context_manager
                     with patch('pandas.DataFrame.to_sql') as mock_to_sql:
-                        # Test that processing completes without raising exception
-                        # but may produce warnings for invalid data
-                        result = processor.process_csv_for_database(f.name)
-                        # Should process 1 row even with invalid data
-                        assert isinstance(result, int)
+                        with patch('pandas.read_sql') as mock_read_sql:
+                            mock_read_sql.return_value = pd.DataFrame({'count': [0]})
+                            # Test that processing completes without raising exception
+                            # but may produce warnings for invalid data
+                            result = processor.process_csv_for_database(f.name)
+                            # Should process 1 row even with invalid data
+                            assert isinstance(result, int)
             finally:
                 os.unlink(f.name)
 
@@ -287,8 +293,10 @@ class TestMonthEndProcessing:
             return original_to_sql(self, *args, **kwargs)
         
         with patch('pandas.DataFrame.to_sql', capture_df):
-            with patch.object(processor.db, 'get_connection'):
-                processor.process_csv_for_database(temp_financial_csv)
+            with patch('pandas.read_sql') as mock_read_sql:
+                mock_read_sql.return_value = pd.DataFrame({'count': [0]})
+                with patch.object(processor.db, 'get_connection'):
+                    processor.process_csv_for_database(temp_financial_csv)
         
         assert captured_df is not None
         

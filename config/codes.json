@@ -39,6 +39,14 @@
     "id": "200",
     "description": "クレジットカード債務"
   },
+  "JCB Credit Card": {
+    "id": "201",
+    "description": "JCBカード"
+  },
+  "S Stacia Credit Card": {
+    "id": "202",
+    "description": "S Staciaカード"
+  },
   "Short-term Loans": {
     "id": "210",
     "description": "短期借入金"

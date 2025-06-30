@@ -323,36 +323,6 @@ class CSVProcessor:
         
         return monthly_data
 
-    def process_month_end_complete_workflow(self, file_path: str) -> pd.DataFrame:
-        """月末処理の完全ワークフロー実行
-        
-        Args:
-            file_path: 処理対象のCSVファイルパス
-            
-        Returns:
-            最終的なbalance sheet形式のDataFrame
-        """
-        # 1. CSV処理
-        processed_count = self.process_csv_for_database(file_path)
-        print(f"処理行数: {processed_count}")
-        
-        # 2. セット検証
-        is_valid, message, errors = self.validate_sets()
-        if not is_valid:
-            raise ValueError(f"セット検証エラー: {message}")
-        print(f"検証結果: {message}")
-        
-        # 3. 仕訳確定
-        if not self.confirm_entries():
-            raise ValueError("仕訳確定に失敗しました")
-        print("仕訳確定完了")
-        
-        # 4. 月次バランスシート生成
-        balance_sheet = self.generate_balance_sheet_format()
-        print(f"バランスシート生成完了: {len(balance_sheet)}ヶ月分")
-        
-        return balance_sheet
-    
     def process_bank_csv(self, file_path: str, bank: str, clear_temp: bool = True, check_duplicates: bool = True) -> int:
         """銀行CSV処理（機械学習分類付き）
         
@@ -393,7 +363,12 @@ class CSVProcessor:
                 print(f"temp_journalクリア: {result.rowcount}行削除")
         
         # CSV処理とDB保存
-        processed_count = self._process_ufj_csv_to_db(file_path, source_filename)
+        if bank == 'ufj':
+            processed_count = self._process_ufj_csv_to_db(file_path, source_filename)
+        elif bank == 'jcb':
+            processed_count = self._process_jcb_csv_to_db(file_path, source_filename)
+        else:
+            raise ValueError(f"サポートされていない銀行種別: {bank}")
         
         print(f"処理完了: {processed_count}行をデータベースに保存")
         return processed_count
@@ -415,10 +390,6 @@ class CSVProcessor:
             return pd.to_datetime(date_str, errors='coerce')
         except:
             return pd.NaT
-    
-    def train_bank_models(self) -> bool:
-        """銀行分類モデルの学習"""
-        return self.bank_predictor.train_model()
     
     def _process_ufj_csv_to_db(self, file_path: str, source_filename: str) -> int:
         """UFJ CSVを処理してデータベースに保存"""
@@ -484,7 +455,7 @@ class CSVProcessor:
         df_clean['abstruct'] = df_clean.get('摘要', '').fillna('').astype(str)
         df_clean['memo'] = df_clean.get('摘要内容', '').fillna('').astype(str)
         
-        # テキスト正規化と結合
+        # テキスト正規化と結合（directionも特徴量として追加）
         text_columns = ['abstruct', 'memo']
         df_clean['combined_text'] = ''
         for col in text_columns:
@@ -494,6 +465,9 @@ class CSVProcessor:
         
         # 取引方向判定
         df_clean['direction'] = self._determine_direction(df_clean)
+        
+        # directionを特徴量として追加
+        df_clean['combined_text'] += df_clean['direction'].fillna('') + ' '
         
         # 金額計算
         df_clean['amount'] = self._calculate_amount(df_clean)
@@ -665,3 +639,178 @@ class CSVProcessor:
             )
         
         return len(df_db)
+    
+    def _process_jcb_csv_to_db(self, file_path: str, source_filename: str) -> int:
+        """JCB CSVを処理してデータベースに保存"""
+        
+        # CSV読み込み
+        try:
+            df = pd.read_csv(file_path, encoding='shift_jis')
+            print(f"CSV読み込み完了（shift_jis）: {len(df)}行")
+        except UnicodeDecodeError:
+            try:
+                df = pd.read_csv(file_path, encoding='utf-8')
+                print(f"CSV読み込み完了（utf-8）: {len(df)}行")
+            except Exception as e:
+                print(f"CSV読み込みエラー: {e}")
+                return 0
+        
+        if df.empty:
+            print("CSVファイルが空です")
+            return 0
+        
+        # JCB CSV処理（機械学習分類）
+        df_processed = self._process_jcb_with_ml(df)
+        
+        # 学習データ保存（学習用カラム + 予測結果のみ）
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        train_filename = f"jcb_processed_{timestamp}.csv"
+        self.bank_predictor.save_training_data(df_processed, train_filename, bank='jcb')
+        
+        # 複式簿記形式に変換してDB保存
+        entries = self._convert_to_double_entry_jcb(df_processed)
+        saved_count = self._save_entries_to_db(entries, source_filename)
+        
+        return saved_count
+    
+    def _process_jcb_with_ml(self, df: pd.DataFrame) -> pd.DataFrame:
+        """JCB CSVを機械学習で分類処理"""
+        
+        # 必要なカラムが存在するかチェック（JCBカラム名の対応）
+        date_cols = ['ご利用日', '日付']
+        abstruct_cols = ['ご利用先など', '利用先']  
+        memo_cols = ['備考']
+        out_cols = ['ご利用金額（円）', '利用金額']
+        
+        # データ整理
+        df_clean = df.copy()
+        
+        # 日付正規化（複数の日付カラム名に対応）
+        date_col = None
+        for col in date_cols:
+            if col in df_clean.columns:
+                date_col = col
+                break
+        
+        if date_col:
+            df_clean['date'] = pd.to_datetime(df_clean[date_col], errors='coerce').dt.strftime('%Y-%m-%d')
+        else:
+            print("警告: 日付カラムが見つかりません")
+            df_clean['date'] = '2024-01-01'  # デフォルト日付
+        
+        # テキスト結合（abstruct, memo）
+        df_clean['abstruct'] = df_clean.get('ご利用先など', df_clean.get('利用先', '')).fillna('').astype(str)
+        df_clean['memo'] = df_clean.get('備考', '').fillna('').astype(str)
+        
+        # テキスト正規化と結合（directionも特徴量として追加）
+        text_columns = ['abstruct', 'memo']
+        df_clean['combined_text'] = ''
+        for col in text_columns:
+            if col in df_clean.columns:
+                normalized_text = df_clean[col].fillna('').apply(self.bank_predictor.normalize_text)
+                df_clean['combined_text'] += normalized_text + ' '
+        
+        # 取引方向判定（JCBは出金のみ）
+        df_clean['direction'] = 'out'
+        
+        # directionを特徴量として追加
+        df_clean['combined_text'] += df_clean['direction'].fillna('') + ' '
+        
+        # 金額計算
+        df_clean['amount'] = self._calculate_jcb_amount(df_clean)
+        
+        # 機械学習予測
+        predictions = []
+        for idx, row in df_clean.iterrows():
+            text = row['combined_text'].strip()
+            
+            # subject_code予測（JCB専用モデル使用）
+            subject_result = self.bank_predictor.predict_subject_code_ml(text, bank='jcb')
+            if subject_result and subject_result[2] > 0.5:
+                debit, credit = subject_result[0], subject_result[1]
+            else:
+                # デフォルト分類（JCBは貸方固定）
+                debit, credit = '598', '201'  # 雑費 → JCBカード
+            
+            # subject_codeを3桁に統一
+            debit = str(int(float(debit))).zfill(3)
+            credit = str(int(float(credit))).zfill(3)
+            
+            # remarks予測（JCB専用モデル使用）
+            remarks_result = self.bank_predictor.predict_remarks_ml(text, bank='jcb')
+            if remarks_result and remarks_result[1] > 0.5:
+                remarks = remarks_result[0]
+            else:
+                remarks = 'JCB Auto classified'
+            
+            predictions.append({
+                'suggested_debit': debit,
+                'suggested_credit': credit,
+                'remarks_classified': remarks
+            })
+        
+        # 予測結果を追加
+        for i, pred in enumerate(predictions):
+            for key, value in pred.items():
+                df_clean.loc[i, key] = value
+        
+        return df_clean
+    
+    def _calculate_jcb_amount(self, df: pd.DataFrame) -> pd.Series:
+        """JCB金額計算"""
+        amounts = []
+        for _, row in df.iterrows():
+            # JCBの利用金額チェック
+            amount_cols = ['ご利用金額（円）', '利用金額']
+            amount = 0
+            
+            for col in amount_cols:
+                if col in row and pd.notna(row[col]) and str(row[col]).replace(',', '').strip():
+                    try:
+                        amount = float(str(row[col]).replace(',', ''))
+                        break
+                    except ValueError:
+                        pass
+            
+            amounts.append(amount)
+        
+        return pd.Series(amounts)
+    
+    def _convert_to_double_entry_jcb(self, df: pd.DataFrame) -> pd.DataFrame:
+        """JCB複式簿記形式に変換"""
+        entries = []
+        
+        for idx, row in df.iterrows():
+            amount = row.get('amount', 0)
+            if amount == 0:
+                continue
+                
+            date = row.get('date', '')
+            remarks = row.get('remarks_classified', '')
+            debit_code = row.get('suggested_debit', '')
+            credit_code = row.get('suggested_credit', '201')  # JCBカードに固定
+            
+            import random
+            set_id = random.randint(1000, 9999)  # 整数のSetID
+            amount_int = int(round(float(amount)))  # 整数のAmount
+            
+            # 借方エントリ（費用）
+            entries.append({
+                'Date': date,
+                'SubjectCode': debit_code,
+                'Amount': amount_int,
+                'Remarks': remarks,
+                'SetID': set_id
+            })
+            
+            # 貸方エントリ（JCBカード）
+            entries.append({
+                'Date': date,
+                'SubjectCode': credit_code,
+                'Amount': -amount_int,
+                'Remarks': remarks,
+                'SetID': set_id
+            })
+        
+        return pd.DataFrame(entries)

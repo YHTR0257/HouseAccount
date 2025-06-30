@@ -1,0 +1,12 @@
+date:
+  string: "ご利用日"
+  name: "date"
+abstruct:
+  string: "ご利用先など"
+  name: "abstruct"
+out:
+  string: "ご利用金額(￥)"
+  name: "out"
+memo:
+  string: "摘要"
+  name: "memo"

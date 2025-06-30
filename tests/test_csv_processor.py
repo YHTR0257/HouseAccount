@@ -356,8 +356,10 @@ class TestCSVProcessor:
             
             try:
                 with patch('pandas.DataFrame.to_sql', capture_df):
-                    with patch.object(processor.db, 'get_connection'):
-                        processor.process_csv_for_database(f.name)
+                    with patch('pandas.read_sql') as mock_read_sql:
+                        mock_read_sql.return_value = pd.DataFrame({'count': [0]})
+                        with patch.object(processor.db, 'get_connection'):
+                            processor.process_csv_for_database(f.name)
                 
                 # EntryID生成確認
                 assert captured_df is not None
