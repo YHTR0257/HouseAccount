@@ -269,9 +269,6 @@ output/
 reports/
 exports/
 
-# 作業ディレクトリ
-ledger_ingest/
-
 # 機械学習モデル関連
 models/
 *.joblib

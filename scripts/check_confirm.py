@@ -12,7 +12,7 @@ from pathlib import Path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
-from src.query_helper import QueryHelper
+from ledger_ingest.query_helper import QueryHelper
 
 def main():
     """メイン関数"""
@@ -40,14 +40,14 @@ def main():
             helper.show_source_files()
         else:
             # そのまま query_helper に渡す
-            os.system(f"python -m src.query_helper {' '.join(sys.argv[1:])}")
+            os.system(f"python -m ledger_ingest.query_helper {' '.join(sys.argv[1:])}")
     else:
         print("使用方法:")
         print("  python scripts/check_confirm.py before   # confirm前の確認")
         print("  python scripts/check_confirm.py after    # confirm後の確認") 
         print("  python scripts/check_confirm.py status   # 現在の状況")
         print("  python scripts/check_confirm.py all      # 全情報表示")
-        print("\nまたは src.query_helper の任意のコマンドを使用可能:")
+        print("\nまたは ledger_ingest.query_helper の任意のコマンドを使用可能:")
         print("  summary, duplicates, balance, recent, files, preview")
 
 if __name__ == '__main__':

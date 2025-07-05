@@ -31,23 +31,34 @@ services:
     build: ./docker
     container_name: household_app
     restart: unless-stopped
-    user: superset  # 元に戻す
+    user: superset
     cpus: '1.0'
     environment:
+      - HOME=/app
+      - SUPERSET_HOME=/app/superset
       - DATABASE_URL=postgresql://postgres:password@postgres:5432/household
-      - PYTHONPATH=/app/src
+      # - PYTHONPATH=/app/ledger_ingest
       - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY}
+      - vscode-cache:/home/superset/.vscode-server/
     ports:
       - "8088:8088"
     depends_on:
       - postgres
+      - redis
     volumes:
       - .:/app
       - ./data:/app/data
-      - ./src:/app/src
-      - superset-vscode:/app/superset_home/.vscode-server  # VS Code Server専用
+      - ./ledger_ingest:/app/ledger_ingest
     working_dir: /app
-    command: ["sleep", "infinity"]
+
+  redis:
+    image: redis:7-alpine
+    container_name: household_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
 
 volumes:
   superset-vscode:

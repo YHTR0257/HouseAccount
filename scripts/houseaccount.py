@@ -66,7 +66,7 @@ def main():
     
     # 基本操作
     if command == 'init':
-        run_command("python -m src.main init")
+        run_command("python -m ledger_ingest.main init")
     
     elif command in ['process', 'p']:
         if len(sys.argv) < 3:
@@ -77,19 +77,19 @@ def main():
         
         # オプション引数をそのまま渡す
         options = ' '.join(sys.argv[3:]) if len(sys.argv) > 3 else ''
-        run_command(f"python -m src.main process {file_path} {options}")
+        run_command(f"python -m ledger_ingest.main process {file_path} {options}")
     
     elif command in ['confirm', 'c']:
-        run_command("python -m src.main confirm")
+        run_command("python -m ledger_ingest.main confirm")
     
     elif command in ['trial', 't']:
-        run_command("python -m src.main trial")
+        run_command("python -m ledger_ingest.main trial")
     
     elif command == 'cashflow':
-        run_command("python -m src.main cashflow")
+        run_command("python -m ledger_ingest.main cashflow")
     
     elif command == 'summary':
-        run_command("python -m src.main summary")
+        run_command("python -m ledger_ingest.main summary")
     
     # confirm確認用
     elif command in ['check-before', 'cb']:
@@ -102,11 +102,11 @@ def main():
         run_command("python scripts/check_confirm.py status")
     
     elif command == 'check-all':
-        run_command("python -m src.query_helper all")
+        run_command("python -m ledger_ingest.query_helper all")
     
     # クエリヘルパー系
     elif command in ['summary-db', 'duplicates', 'balance', 'recent', 'files', 'preview']:
-        run_command(f"python -m src.query_helper {command}")
+        run_command(f"python -m ledger_ingest.query_helper {command}")
     
     # UFJ銀行CSV処理
     elif command in ['process-ufj', 'pu']:
@@ -118,10 +118,10 @@ def main():
         
         # オプション引数をそのまま渡す
         options = ' '.join(sys.argv[3:]) if len(sys.argv) > 3 else ''
-        run_command(f"python -m src.main process-ufj {file_path} {options}")
+        run_command(f"python -m ledger_ingest.main process-ufj {file_path} {options}")
     
     elif command == 'train-ufj':
-        run_command("python -m src.main train-ufj")
+        run_command("python -m ledger_ingest.main train-ufj")
     
     elif command == 'process-train':
         if len(sys.argv) < 3:
@@ -130,14 +130,14 @@ def main():
             sys.exit(1)
         file_path = sys.argv[2]
         
-        run_command(f"python -m src.main process-train {file_path}")
+        run_command(f"python -m ledger_ingest.main process-train {file_path}")
     
     # その他
     elif command == 'test':
         run_command("python -m pytest tests/ -v")
     
     elif command == 'clean':
-        from src.models import DatabaseManager
+        from ledger_ingest.models import DatabaseManager
         from sqlalchemy import text
         
         db = DatabaseManager()

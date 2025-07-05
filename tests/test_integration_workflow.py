@@ -7,7 +7,7 @@ import sys
 import os
 sys.path.append('/workspace')
 
-from src.processor import CSVProcessor
+from ledger_ingest.processor import CSVProcessor
 import pandas as pd
 from pathlib import Path
 import tempfile
@@ -72,7 +72,7 @@ def test_integration_workflow():
         
         # 科目コードマッピングのテスト
         print("\n--- Step 3: 科目コードマッピング ---")
-        from src.config import SUBJECT_CODES
+        from ledger_ingest.config import SUBJECT_CODES
         
         df['Subject'] = df['SubjectCode'].map(SUBJECT_CODES)
         mapped_count = df['Subject'].notna().sum()
