@@ -276,7 +276,7 @@ reports/
 exports/
 
 # 機械学習モデル関連
-models/
+models/*
 *.joblib
 *.pickle
 *.h5

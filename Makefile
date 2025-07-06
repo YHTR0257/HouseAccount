@@ -37,6 +37,22 @@ process: ## CSVファイル処理 (例: make process FILE=data/sample.csv)
 	fi
 	python -m ledger_ingest.main process $(FILE)
 
+process-ufj: ## UFJ銀行のCSVファイル処理 (例: make process-ufj FILE=data/ufj.csv)
+	@if [ -z "$(FILE)" ]; then \
+		echo "エラー: FILEパラメータが必要です"; \
+		echo "使用例: make process-ufj FILE=data/ufj.csv"; \
+		exit 1; \
+	fi
+	python -m ledger_ingest.main process-ufj $(FILE)
+
+process-jcb: ## JCBカードのCSVファイル処理 (例: make process-jcb FILE=data/jcb.csv)
+	@if [ -z "$(FILE)" ]; then \
+		echo "エラー: FILEパラメータが必要です"; \
+		echo "使用例: make process-jcb FILE=data/jcb.csv"; \
+		exit 1; \
+	fi
+	python -m ledger_ingest.main process-jcb $(FILE)
+
 confirm: ## 仕訳確定
 	python -m ledger_ingest.main confirm
 
@@ -80,3 +96,12 @@ status: ## 家計状況確認
 
 clean: ## temp_journalクリア
 	python -c "from ledger_ingest.database import DatabaseManager; from sqlalchemy import text; db = DatabaseManager(); conn = db.get_connection(); conn.execute(text('DELETE FROM temp_journal')); print('temp_journalをクリアしました')"
+
+train: ## 機械学習モデルの学習 (例: make train ARGS=ufj)
+	@if [ -z "$(ARGS)" ]; then \
+		echo "エラー: ARGSパラメータが必要です (ufj または jcb)"; \
+		echo "使用例: make train ARGS=ufj"; \
+		exit 1; \
+	fi
+	python -m ledger_ingest.main train $(ARGS)
+
