@@ -345,61 +345,107 @@ FROM temp_journal;""")
                 net_income = row['income'] + row['expenses']
                 print(f"{row['year']}-{row['month']:02d} | {row['assets']:8,.0f} | {row['liabilities']:8,.0f} | {row['equity']:8,.0f} | {row['income']:8,.0f} | {row['expenses']:8,.0f} | {net_income:8,.0f}")
     
-    def show_closing_status(self):
-        """締切状況確認"""
-        print("\n=== 締切状況 ===")
-        
-        closing_query = """
-        SELECT 
-            year,
-            month,
-            COUNT(*) as close_entries,
-            SUM(amount) as total_amount
-        FROM journal_entries
-        WHERE remarks = 'close'
-        GROUP BY year, month
-        ORDER BY year, month
+    def check_data(self, target: str, options: list):
         """
+        汎用的なデータ確認機能
+        target: temp, journal, trial, closing
+        options: --head N, --tail N, --random N, --set-id X, --date YYYY-MM-DD, --month YYYY-MM
+        """
+        table_map = {
+            'temp': 'temp_journal',
+            'journal': 'journal_entries',
+            'trial': 'trial_balance',
+            'closing': 'journal_entries'
+        }
         
-        with self.db.get_connection() as conn:
-            closings = pd.read_sql(text(closing_query), conn)
+        if target not in table_map:
+            print(f"無効なターゲット: {target}")
+            return
             
-            if len(closings) == 0:
-                print("締切処理の履歴がありません")
-                return
-            
-            print("締切済み月:")
-            for _, row in closings.iterrows():
-                print(f"  {row['year']}年{row['month']}月: {row['close_entries']}件の締切仕訳")
-            
-            # 未締切月の確認
-            recent_query = """
-            SELECT DISTINCT year, month
-            FROM journal_entries
-            WHERE remarks != 'close'
-            AND (subject_code BETWEEN 400 AND 599)
-            AND (year * 100 + month) NOT IN (
-                SELECT DISTINCT year * 100 + month
-                FROM journal_entries
-                WHERE remarks = 'close'
-            )
-            ORDER BY year, month
-            """
-            
-            unclosed = pd.read_sql(text(recent_query), conn)
-            
-            if len(unclosed) > 0:
-                print("\n未締切月（損益取引あり）:")
-                for _, row in unclosed.iterrows():
-                    print(f"  {row['year']}年{row['month']}月")
-            else:
-                print("\n未締切月はありません")
+        table_name = table_map[target]
+        
+        # デフォルトのソート順
+        order_by = "date, set_id, entry_id"
+        if target == 'trial':
+            order_by = "subject_code"
+        elif target == 'closing':
+            order_by = "date, set_id"
+
+        where_clauses = []
+        params = {}
+
+        if target == 'closing':
+            where_clauses.append("remarks IN ('close', 'loss and benefit')")
+
+        # オプション解析
+        mode = 'head'
+        limit = 10
+        i = 0
+        while i < len(options):
+            opt = options[i]
+            if opt in ('--head', '--tail', '--random'):
+                mode = opt[2:]
+                if i + 1 < len(options) and options[i+1].isdigit():
+                    limit = int(options[i+1])
+                    i += 1
+            elif opt == '--set-id':
+                if i + 1 < len(options):
+                    where_clauses.append("set_id = :set_id")
+                    params['set_id'] = options[i+1]
+                    i += 1
+            elif opt == '--date':
+                if i + 1 < len(options):
+                    where_clauses.append("date = :date")
+                    params['date'] = options[i+1]
+                    i += 1
+            elif opt == '--month':
+                 if i + 1 < len(options):
+                    year, month = options[i+1].split('-')
+                    where_clauses.append("year = :year AND month = :month")
+                    params['year'] = int(year)
+                    params['month'] = int(month)
+                    i += 1
+            i += 1
+
+        self.show_data(table_name, where_clauses, params, mode, limit, order_by)
+
+    def show_data(self, table_name, where_clauses, params, mode, limit, order_by):
+        """指定された条件でテーブルからデータを表示する"""
+        
+        query_str = f"SELECT * FROM {table_name}"
+        if where_clauses:
+            query_str += " WHERE " + " AND ".join(where_clauses)
+        
+        if mode == 'random':
+            query_str += f" ORDER BY RANDOM() LIMIT {limit}"
+        elif mode == 'head':
+            query_str += f" ORDER BY {order_by} ASC LIMIT {limit}"
+        elif mode == 'tail':
+            query_str += f" ORDER BY {order_by} DESC LIMIT {limit}"
+
+        print(f"\n--- {table_name} ({mode.capitalize()} {limit}) ---")
+        print(f"Query: {query_str}")
+        
+        try:
+            with self.db.get_connection() as conn:
+                df = pd.read_sql(text(query_str), conn, params=params)
+                if df.empty:
+                    print("データが見つかりません。")
+                else:
+                    # tailの場合は表示順を元に戻す
+                    if mode == 'tail':
+                        df = df.iloc[::-1]
+                    print(df.to_string(index=False))
+        except Exception as e:
+            logger.error(f"データ表示でエラーが発生しました: {e}")
+            print(f"エラー: {table_name} からデータを取得できませんでした。")
 
 
 def main():
     """メイン実行関数"""
-    if len(sys.argv) < 2:
-        print("使用方法: python -m ledger_ingest.query_helper [command]")
+    args = sys.argv[1:]
+    if not args:
+        print("使用方法: python -m ledger_ingest.query_helper [command] [options]")
         print("\nコマンド:")
         print("  summary     - テーブル概要表示")
         print("  duplicates  - 重複チェック")
@@ -410,12 +456,13 @@ def main():
         print("  status      - 家計状況確認")
         print("  trend       - 月次推移表示")
         print("  closing     - 締切状況確認")
+        print("  check       - データ確認 (例: check journal --head 10)")
         print("  all         - すべての情報を表示")
         return
-    
-    command = sys.argv[1]
+
+    command = args[0]
     helper = QueryHelper()
-    
+
     if command == 'summary':
         helper.show_table_summary()
     elif command == 'duplicates':
@@ -424,7 +471,7 @@ def main():
         helper.check_balance_temp()
         helper.check_balance_confirmed()
     elif command == 'recent':
-        days = int(sys.argv[2]) if len(sys.argv) > 2 else 7
+        days = int(args[1]) if len(args) > 1 and args[1].isdigit() else 7
         helper.show_recent_confirmations(days)
     elif command == 'files':
         helper.show_source_files()
@@ -433,10 +480,18 @@ def main():
     elif command == 'status':
         helper.show_financial_status()
     elif command == 'trend':
-        months = int(sys.argv[2]) if len(sys.argv) > 2 else 6
+        months = int(args[1]) if len(args) > 1 and args[1].isdigit() else 6
         helper.show_monthly_trend(months)
     elif command == 'closing':
         helper.show_closing_status()
+    elif command == 'check':
+        if len(args) < 2:
+            print("checkコマンドの使用方法: check <target> [options]")
+            print("target: temp, journal, trial, closing")
+            return
+        target = args[1]
+        options = args[2:]
+        helper.check_data(target, options)
     elif command == 'all':
         helper.show_table_summary()
         helper.check_duplicates()
@@ -450,7 +505,8 @@ def main():
         helper.show_closing_status()
     else:
         print(f"無効なコマンド: {command}")
-        print("使用可能なコマンド: summary, duplicates, balance, recent, files, preview, status, trend, closing, all")
+        print("使用可能なコマンド: summary, duplicates, balance, recent, files, preview, status, trend, closing, check, all")
+
 
 
 if __name__ == '__main__':

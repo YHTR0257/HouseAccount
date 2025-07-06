@@ -261,6 +261,9 @@ class CSVProcessor:
 
             # 一時テーブルクリア
             conn.execute(text("DELETE FROM temp_journal"))
+            
+            # 明示的にコミット
+            conn.commit()
 
         # CSVファイル移動
         for file in PROCESS_DIR.glob('*.csv'):
@@ -333,7 +336,7 @@ class CSVProcessor:
             SUM(CASE WHEN subject_code BETWEEN 100 AND 199 THEN amount ELSE 0 END) as TotalAssets,
             SUM(CASE WHEN subject_code BETWEEN 200 AND 399 THEN amount ELSE 0 END) as TotalLiabilities,
             SUM(CASE WHEN subject_code BETWEEN 400 AND 499 THEN amount ELSE 0 END) as TotalIncome,
-            SUM(CASE WHEN subject_code BETWEEN 500 AND 699 THEN amount ELSE 0 END) as TotalExpenses
+            SUM(CASE WHEN subject_code BETWEEN 500 AND 599 THEN amount ELSE 0 END) as TotalExpenses
         FROM journal_entries 
         GROUP BY year, month
         ORDER BY year, month
@@ -913,7 +916,6 @@ class CSVProcessor:
             # 2. 締切仕訳の作成
             set_id = f'{randint(901, 999)}'
 
-            trans = conn.begin()
             try:
                 # 2a. 各損益科目の残高をゼロにする仕訳
                 for row in pl_balances:
@@ -939,12 +941,13 @@ class CSVProcessor:
                         'year': year, 'month': month
                     })
                 
-                trans.commit()
+                # 明示的にコミット
+                conn.commit()
+                
                 if reclose:
                     print(f"{year}年{month}月の再締切処理が完了しました。純損益: {net_income:,.0f}円")
                 else:
                     print(f"{year}年{month}月の締切処理が完了しました。純損益: {net_income:,.0f}円")
 
             except Exception as e:
-                trans.rollback()
-                print(f"エラーが発生したため、締切処理をロールバックしました: {e}")
+                print(f"エラーが発生したため、締切処理に失敗しました: {e}")

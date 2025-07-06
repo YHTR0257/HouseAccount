@@ -135,17 +135,37 @@ class DatabaseManager:
                 ORDER BY date, set_id
             """))
             
+            conn.execute(text("DROP VIEW IF EXISTS trial_balance;"))
             conn.execute(text("""
-                CREATE OR REPLACE VIEW trial_balance AS
+                CREATE VIEW trial_balance AS
+                WITH monthly_balances AS (
+                    SELECT
+                        year,
+                        month,
+                        subject_code,
+                        subject,
+                        SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as debit_total,
+                        SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) as credit_total,
+                        SUM(amount) as monthly_balance
+                    FROM journal_entries
+                    WHERE remarks NOT IN ('close', 'loss and benefit')
+                    GROUP BY year, month, subject_code, subject
+                )
                 SELECT
-                    subject_code,
-                    subject,
-                    SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as debit_total,
-                    SUM(CASE WHEN amount < 0 THEN -amount ELSE 0 END) as credit_total,
-                    SUM(amount) as balance
-                FROM journal_entries
-                GROUP BY subject_code, subject
-                ORDER BY subject_code
+                    m.year,
+                    m.month,
+                    m.subject_code,
+                    m.subject,
+                    m.debit_total,
+                    m.credit_total,
+                    CASE
+                        WHEN m.subject_code < 400 THEN
+                            SUM(m.monthly_balance) OVER (PARTITION BY m.subject_code ORDER BY m.year, m.month)
+                        ELSE
+                            m.monthly_balance
+                    END as balance
+                FROM monthly_balances m
+                ORDER BY m.year, m.month, m.subject_code;
             """))
             
             conn.commit()

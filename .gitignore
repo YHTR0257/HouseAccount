@@ -264,6 +264,7 @@ accounting.log
 temp/
 tmp/
 *.tmp
+/redis/
 
 # 出力ファイル
 output/
