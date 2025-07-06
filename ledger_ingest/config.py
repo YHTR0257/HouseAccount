@@ -15,6 +15,7 @@ CONFIG_DIR = BASE_DIR / 'config'
 DATA_DIR = BASE_DIR / 'data'
 TEMP_UPLOADS_DIR = DATA_DIR / 'uploads'
 CONFIRMED_DIR = DATA_DIR / 'confirmed'
+PROCESS_DIR = DATA_DIR / 'process'
 
 # Create directories if they don't exist
 TEMP_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)

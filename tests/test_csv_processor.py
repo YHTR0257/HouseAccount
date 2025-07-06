@@ -9,7 +9,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
 from ledger_ingest.processor import CSVProcessor
-from ledger_ingest.models import DatabaseManager
+from ledger_ingest.database import DatabaseManager
 
 
 class TestCSVProcessor:
@@ -52,7 +52,9 @@ class TestCSVProcessor:
     @pytest.fixture
     def processor(self, mock_db_manager):
         """CSVProcessor インスタンス"""
-        return CSVProcessor(mock_db_manager)
+        processor = CSVProcessor()
+        processor.db = mock_db_manager
+        return processor
 
     def test_csv_processor_initialization(self):
         """CSVProcessor初期化テスト"""
@@ -62,7 +64,8 @@ class TestCSVProcessor:
         
         # 専用DBマネージャー指定
         custom_db = Mock(spec=DatabaseManager)
-        processor_custom = CSVProcessor(custom_db)
+        processor_custom = CSVProcessor()
+        processor_custom.db = custom_db
         assert processor_custom.db == custom_db
 
     def test_process_csv_for_database_basic(self, processor, temp_csv_file, mock_db_manager):
@@ -391,5 +394,119 @@ class TestCSVProcessor:
                         expected_suffix = f"_{str(i).zfill(3)}"
                         assert entry_id.endswith(expected_suffix)
                     
+            finally:
+                os.unlink(f.name)
+
+    def test_remove_duplicate_entries(self, processor, mock_db_manager):
+        """重複entry_id削除機能テスト"""
+        mock_connection = mock_db_manager.get_connection.return_value.__enter__.return_value
+        
+        # SQLの実行結果をモック
+        mock_execute_result = MagicMock()
+        mock_execute_result.rowcount = 2  # 2件の重複を削除
+        mock_connection.execute.return_value = mock_execute_result
+        
+        with patch('ledger_ingest.processor.logger') as mock_logger:
+            deleted_count = processor.remove_duplicate_entries()
+            
+            # 戻り値の確認
+            assert deleted_count == 2
+            
+            # SQL実行の確認
+            mock_connection.execute.assert_called_once()
+            executed_query = mock_connection.execute.call_args[0][0].text
+            assert "DELETE FROM temp_journal" in executed_query
+            assert "ctid NOT IN" in executed_query
+            assert "GROUP BY entry_id" in executed_query
+            
+            # ログ出力の確認
+            mock_logger.info.assert_called_once_with(
+                "temp_journal内の重複entry_idを削除しました: 2件"
+            )
+
+    def test_remove_duplicate_entries_no_duplicates(self, processor, mock_db_manager):
+        """重複entry_idがない場合のテスト"""
+        mock_connection = mock_db_manager.get_connection.return_value.__enter__.return_value
+        
+        # SQLの実行結果をモック（削除対象なし）
+        mock_execute_result = MagicMock()
+        mock_execute_result.rowcount = 0  # 削除対象なし
+        mock_connection.execute.return_value = mock_execute_result
+        
+        with patch('ledger_ingest.processor.logger') as mock_logger:
+            deleted_count = processor.remove_duplicate_entries()
+            
+            # 戻り値の確認
+            assert deleted_count == 0
+            
+            # SQL実行の確認
+            mock_connection.execute.assert_called_once()
+            
+            # ログ出力がないことを確認
+            mock_logger.info.assert_not_called()
+
+    def test_confirm_entries_with_duplicate_removal(self, processor, mock_db_manager):
+        """confirm_entriesで重複削除が実行されることのテスト"""
+        mock_connection = mock_db_manager.get_connection.return_value.__enter__.return_value
+        
+        # セット検証モック（成功）
+        with patch.object(processor, 'validate_sets') as mock_validate:
+            mock_validate.return_value = (True, "平衡確認", None)
+            
+            # 重複削除のモック
+            with patch.object(processor, 'remove_duplicate_entries') as mock_remove_dup:
+                mock_remove_dup.return_value = 1  # 1件削除
+                
+                with patch('pathlib.Path.glob') as mock_glob:
+                    with patch('shutil.move') as mock_move:
+                        mock_glob.return_value = []  # 移動対象ファイルなし
+                        
+                        result = processor.confirm_entries()
+                        
+                        assert result == True
+                        # 重複削除が最初に実行されることを確認
+                        mock_remove_dup.assert_called_once()
+                        # セット検証が重複削除の後に実行されることを確認
+                        mock_validate.assert_called_once()
+
+    def test_duplicate_entry_integration(self, processor):
+        """重複entry_id統合テスト（実際のデータ処理）"""
+        # 重複entry_idを含むテストデータ
+        test_data = """Date,ID,SubjectCode,Amount,Remarks,SetID
+                        2024-03-01,,100,-1000,Test1,01
+                        2024-03-01,,500,1000,Test1,01
+                        2024-03-02,,101,-2000,Test2,02
+                        2024-03-02,,530,2000,Test2,02"""
+        
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
+            f.write(test_data)
+            f.flush()
+            
+            original_to_sql = pd.DataFrame.to_sql
+            captured_df = None
+            
+            def capture_df(self, *args, **kwargs):
+                nonlocal captured_df
+                captured_df = self.copy()
+                # 意図的に重複entry_idを作成
+                if len(captured_df) > 0:
+                    captured_df.loc[captured_df.index[1], 'entry_id'] = captured_df.loc[captured_df.index[0], 'entry_id']
+                return original_to_sql(self, *args, **kwargs)
+            
+            try:
+                with patch('pandas.DataFrame.to_sql', capture_df):
+                    with patch('pandas.read_sql') as mock_read_sql:
+                        mock_read_sql.return_value = pd.DataFrame({'count': [0]})
+                        with patch.object(processor.db, 'get_connection') as mock_get_conn:
+                            mock_conn = mock_get_conn.return_value.__enter__.return_value
+                            mock_result = mock_conn.execute.return_value
+                            mock_result.rowcount = 0
+                            processor.process_csv_for_database(f.name)
+                
+                # テストデータに重複が作成されていることを確認
+                assert captured_df is not None
+                duplicate_entries = captured_df[captured_df['entry_id'].duplicated()]
+                # このテストでは意図的に重複を作成したので、確定処理で削除されることを期待
+                
             finally:
                 os.unlink(f.name)

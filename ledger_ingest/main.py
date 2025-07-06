@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 
 def main():
     if len(sys.argv) < 2:
-        print("使用方法: python main.py [init|process|process-ufj|process-jcb|confirm|trial|cashflow|summary|train|close|status] [args...]")
+        print("使用方法: python main.py [init|process|process-ufj|process-jcb|confirm|trial|cashflow|summary|train|close|status|clear] [args...]")
         print("  process オプション:")
         print("    --no-clear    : temp_journalテーブルをクリアしない")
         print("    --no-duplicates : 重複チェックを行わない")
@@ -24,6 +24,8 @@ def main():
         print("  close:")
         print("    python main.py close [年月] [--reclose] : 月次締切処理（YYYY-MM形式、省略時は前月）")
         print("    --reclose : 既に締切済みの月も再度締切する")
+        print("  clear:")
+        print("    python main.py clear table=temp : temp_journalテーブルをクリア")
         print("  status:")
         print("    python main.py status : 家計状況確認（query_helperの簡易版）")
         return
@@ -201,6 +203,64 @@ def main():
         helper = QueryHelper()
         helper.show_financial_status()
         helper.show_closing_status()
+
+    elif command == 'clear':
+        # パラメータ解析
+        table_param = None
+        for arg in sys.argv[2:]:
+            if arg.startswith('table='):
+                table_param = arg.split('=', 1)[1]
+                break
+        
+        if not table_param:
+            logger.error("tableパラメータが指定されていません")
+            print("エラー: table=temp を指定してください")
+            print("使用例: python main.py clear table=temp")
+            return
+        
+        # テーブル名のバリデーション
+        table_mapping = {
+            'temp': 'temp_journal'
+        }
+        
+        if table_param not in table_mapping:
+            logger.error(f"無効なテーブル名が指定されました: {table_param}")
+            print(f"エラー: 無効なテーブル名です: {table_param}")
+            print("対応テーブル: temp (temp_journal)")
+            return
+        
+        actual_table = table_mapping[table_param]
+        logger.info(f"テーブルクリア処理を開始します: {actual_table}")
+        
+        # データベース接続とクリア処理
+        try:
+            from sqlalchemy import text
+            with db_manager.get_connection() as conn:
+                # 削除前の件数確認
+                count_result = conn.execute(text(f"SELECT COUNT(*) as count FROM {actual_table}"))
+                before_count = count_result.fetchone().count
+                
+                if before_count == 0:
+                    logger.info(f"{actual_table}テーブルは既に空です")
+                    print(f"{actual_table}テーブルは既に空です")
+                    return
+                
+                logger.info(f"{actual_table}テーブルの削除前件数: {before_count}")
+                print(f"{actual_table}テーブルをクリアします: {before_count}件")
+                
+                # テーブルクリア実行
+                result = conn.execute(text(f"DELETE FROM {actual_table}"))
+                deleted_count = result.rowcount
+                
+                # 明示的にコミット
+                conn.commit()
+                
+                logger.info(f"{actual_table}テーブルをクリアしました: {deleted_count}件削除")
+                print(f"クリア完了: {deleted_count}件を削除しました")
+                
+        except Exception as e:
+            logger.error(f"テーブルクリア処理でエラーが発生しました: {e}")
+            print(f"エラー: テーブルクリア処理に失敗しました: {e}")
 
     else:
         logger.warning(f"無効なコマンドが指定されました: {command}")

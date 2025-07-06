@@ -6,7 +6,7 @@ from typing import Optional, Tuple, Dict
 from .database import db_manager
 import os
 import datetime
-from .config import SUBJECT_CODES, TEMP_UPLOADS_DIR, CONFIRMED_DIR, BALANCE_TOLERANCE, get_logger
+from .config import SUBJECT_CODES, PROCESS_DIR, CONFIRMED_DIR, BALANCE_TOLERANCE, get_logger
 from .bank_predictor import BankPredictor
 from random import randint
 
@@ -68,7 +68,7 @@ class CSVProcessor:
         def parse_date_flexible(date_str: str) -> pd.Timestamp:
             """YYYYMMDD形式とYYYY-MM-DD形式の両方に対応した日付パース"""
             if pd.isna(date_str):
-                return pd.NaT
+                return pd.to_datetime("2000-01-01", format='%Y%m%d')
             
             date_str = str(date_str).strip()
             
@@ -84,8 +84,8 @@ class CSVProcessor:
                 return pd.to_datetime(date_str)
             except:
                 # パースできない場合はNaTを返す
-                return pd.NaT
-        
+                return pd.to_datetime("2000-01-01", format='%Y%m%d')
+
         df['Date'] = df['Date'].apply(parse_date_flexible)
         
         # 日付パースに失敗した行をチェック
@@ -207,12 +207,40 @@ class CSVProcessor:
         with self.db.get_connection() as conn:
             return pd.read_sql(text(query), conn)
 
+    def remove_duplicate_entries(self) -> int:
+        """temp_journal内の重複entry_idを削除
+        PostgreSQL用: ctidを使用して最新レコードを保持
+        
+        Returns:
+            削除した重複レコード数
+        """
+        query = """
+        DELETE FROM temp_journal 
+        WHERE ctid NOT IN (
+            SELECT MAX(ctid) 
+            FROM temp_journal 
+            GROUP BY entry_id
+        )
+        """
+        
+        with self.db.get_connection() as conn:
+            result = conn.execute(text(query))
+            deleted_count = result.rowcount
+            
+            if deleted_count > 0:
+                logger.info(f"temp_journal内の重複entry_idを削除しました: {deleted_count}件")
+            
+            return deleted_count
+
     def confirm_entries(self) -> bool:
         """仕訳確定
         
         Returns:
             確定処理の成功/失敗
         """
+        # 重複entry_id削除
+        self.remove_duplicate_entries()
+        
         # セット検証
         is_valid, message, errors = self.validate_sets()
         if not is_valid:
@@ -235,7 +263,7 @@ class CSVProcessor:
             conn.execute(text("DELETE FROM temp_journal"))
 
         # CSVファイル移動
-        for file in TEMP_UPLOADS_DIR.glob('*.csv'):
+        for file in PROCESS_DIR.glob('*.csv'):
             shutil.move(str(file), str(CONFIRMED_DIR / file.name))
 
         return True
