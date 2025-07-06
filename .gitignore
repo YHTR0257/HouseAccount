@@ -243,6 +243,7 @@ data/uploads/
 data/temp/
 data/train/
 data/process/
+config/override_rules.csv
 
 # 設定ファイル（機密情報含む可能性）
 *.env

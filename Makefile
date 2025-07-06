@@ -95,7 +95,7 @@ status: ## 家計状況確認
 	python -m ledger_ingest.main status
 
 clean: ## temp_journalクリア
-	python -c "from ledger_ingest.database import DatabaseManager; from sqlalchemy import text; db = DatabaseManager(); conn = db.get_connection(); conn.execute(text('DELETE FROM temp_journal')); print('temp_journalをクリアしました')"
+	python -c "from ledger_ingest.database import DatabaseManager; from sqlalchemy import text; db = DatabaseManager(); conn = db.get_connection(); conn.execute(text('DELETE FROM temp_journal')); conn.commit(); print('temp_journalをクリアしました')"
 
 train: ## 機械学習モデルの学習 (例: make train ARGS=ufj)
 	@if [ -z "$(ARGS)" ]; then \

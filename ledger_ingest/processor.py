@@ -2,7 +2,7 @@ import pandas as pd
 import shutil
 from pathlib import Path
 from sqlalchemy import text
-from typing import Optional, Tuple, Dict
+from typing import Tuple, Dict
 from .database import db_manager
 import os
 import datetime
@@ -110,12 +110,13 @@ class CSVProcessor:
             # 既存のSetIDを使用し、Date + SetIDの形式に変換
             df['SetID'] = df['Date'].dt.strftime('%Y%m%d') + '_' + df['SetID'].astype(str).str.zfill(3)
         else:
-            # SetIDが存在しない場合は従来通り生成（3桁）
-            df['SetID'] = df['Date'].dt.strftime('%Y%m%d') + '_' + df['Remarks'].str.extract(r'(\d+)$')[0].fillna('000').str.zfill(3)
+            # SetIDが存在しない場合は、Remarksから抽出し、失敗した場合はインデックスでフォールバック
+            set_id_from_remarks = df['Remarks'].str.extract(r'(\d+)$')[0].fillna(pd.Series(df.index).astype(str)).str.zfill(3)
+            df['SetID'] = df['Date'].dt.strftime('%Y%m%d') + '_' + set_id_from_remarks
         
         # EntryIDの生成（SetID + 連番）
         df['EntryID'] = df.groupby('SetID').cumcount().astype(str).str.zfill(3)
-        df['EntryID'] = df['SetID'].astype(str) + '_' + df['EntryID']
+        df['EntryID'] = df['SetID'] + '_' + df['EntryID']
 
         # 科目名の自動変換
         df['Subject'] = df['SubjectCode'].map(SUBJECT_CODES)
@@ -146,7 +147,7 @@ class CSVProcessor:
 
         return len(df)
 
-    def validate_sets(self) -> Tuple[bool, str, Optional[pd.DataFrame]]:
+    def validate_sets(self) -> Tuple[bool, str, pd.DataFrame]:
         """セット検証（複式簿記平衡チェック）
         日付とSetIDの組み合わせで平衡をチェック（remarksは関係なし）
         Carry over関連の仕訳は繰越処理のため平衡チェックから除外
@@ -175,7 +176,7 @@ class CSVProcessor:
         if len(unbalanced) > 0:
             return False, f"不平衡なセットが{len(unbalanced)}件あります（Carry over除く）", unbalanced
         else:
-            return True, "全セット平衡確認（Carry over除く）", None
+            return True, "全セット平衡確認（Carry over除く）", pd.DataFrame()
 
     def get_trial_balance(self) -> pd.DataFrame:
         """試算表取得
@@ -359,13 +360,13 @@ class CSVProcessor:
         return monthly_data
 
     def process_bank_csv(self, file_path: str, bank: str, clear_temp: bool = True, check_duplicates: bool = True) -> int:
-        """銀行CSV処理（機械学習分類付き）
+        """銀行CSV処理（中間CSVファイル生成）
         
         Args:
             file_path: 処理対象のCSVファイルパス
-            bank: 銀行名 ('ufj')
-            clear_temp: 処理前にtemp_journalテーブルをクリアするか
-            check_duplicates: 重複ファイルのチェックを行うか
+            bank: 銀行名 ('ufj', 'jcb')
+            clear_temp: 廃止予定パラメータ（後方互換性のため残存）
+            check_duplicates: 廃止予定パラメータ（後方互換性のため残存）
             
         Returns:
             処理した行数
@@ -376,36 +377,15 @@ class CSVProcessor:
         
         source_filename = Path(file_path).name
         
-        # 重複チェック
-        if check_duplicates:
-            with self.db.get_connection() as conn:
-                existing_count = pd.read_sql(
-                    text("SELECT COUNT(*) as count FROM temp_journal WHERE source_file = :filename"),
-                    conn,
-                    params={'filename': source_filename}
-                ).iloc[0]['count']
-                
-                if existing_count > 0:
-                    print(f"警告: ファイル '{source_filename}' は既に処理済みです（{existing_count}行）")
-                    if not clear_temp:
-                        print("重複処理をスキップします。clear_temp=Trueで強制処理可能です。")
-                        return 0
-        
-        # temp_journalクリア
-        if clear_temp:
-            with self.db.get_connection() as conn:
-                result = conn.execute(text("DELETE FROM temp_journal"))
-                print(f"temp_journalクリア: {result.rowcount}行削除")
-        
-        # CSV処理とDB保存
+        # CSV処理とファイル保存
         if bank == 'ufj':
-            processed_count = self._process_ufj_csv_to_db(file_path, source_filename)
+            processed_count = self._process_ufj_csv_to_file(file_path, source_filename)
         elif bank == 'jcb':
-            processed_count = self._process_jcb_csv_to_db(file_path, source_filename)
+            processed_count = self._process_jcb_csv_to_file(file_path, source_filename)
         else:
             raise ValueError(f"サポートされていない銀行種別: {bank}")
         
-        print(f"処理完了: {processed_count}行をデータベースに保存")
+        logger.info(f"処理完了: {processed_count}行を '{PROCESS_DIR}' にCSVファイルとして保存しました")
         return processed_count
 
     
@@ -426,23 +406,23 @@ class CSVProcessor:
         except:
             return pd.NaT
     
-    def _process_ufj_csv_to_db(self, file_path: str, source_filename: str) -> int:
-        """UFJ CSVを処理してデータベースに保存"""
+    def _process_ufj_csv_to_file(self, file_path: str, source_filename: str) -> int:
+        """UFJ CSVを処理してprocess/ディレクトリにCSVファイルとして保存"""
         
         # CSV読み込み
         try:
             df = pd.read_csv(file_path, encoding='shift_jis')
-            print(f"CSV読み込み完了（shift_jis）: {len(df)}行")
+            logger.info(f"CSV読み込み完了（shift_jis）: {len(df)}行")
         except UnicodeDecodeError:
             try:
                 df = pd.read_csv(file_path, encoding='utf-8')
-                print(f"CSV読み込み完了（utf-8）: {len(df)}行")
+                logger.info(f"CSV読み込み完了（utf-8）: {len(df)}行")
             except Exception as e:
-                print(f"CSV読み込みエラー: {e}")
+                logger.error(f"CSV読み込みエラー: {e}")
                 return 0
         
         if df.empty:
-            print("CSVファイルが空です")
+            logger.warning("CSVファイルが空です")
             return 0
         
         # UFJ CSV処理（機械学習分類）
@@ -454,43 +434,31 @@ class CSVProcessor:
         train_filename = f"ufj_processed_{timestamp}.csv"
         self.bank_predictor.save_training_data(df_processed, train_filename)
         
-        # 複式簿記形式に変換してDB保存
+        # 複式簿記形式に変換
         entries = self._convert_to_double_entry(df_processed)
-        saved_count = self._save_entries_to_db(entries, source_filename)
+        
+        # process/ディレクトリにCSVファイルとして保存
+        output_filename = f"ufj_classified_{timestamp}.csv"
+        saved_count = self._save_entries_to_process_dir(entries, output_filename)
         
         return saved_count
     
     def _process_ufj_with_ml(self, df: pd.DataFrame) -> pd.DataFrame:
-        """UFJ CSVを機械学習で分類処理"""
+        """UFJ CSVを機械学習で分類処理し、ルールを適用"""
         
-        # 必要なカラムが存在するかチェック（日付カラム名の対応）
+        # (...既存の前処理は省略...)
         date_cols = ['取引日', '日付']
         abstruct_cols = ['摘要']  
         memo_cols = ['摘要内容']
-        out_cols = ['支払い金額']
-        in_cols = ['預かり金額']
         
-        # データ整理
         df_clean = df.copy()
         
-        # 日付正規化（複数の日付カラム名に対応）
-        date_col = None
-        for col in date_cols:
-            if col in df_clean.columns:
-                date_col = col
-                break
+        date_col = next((col for col in date_cols if col in df_clean.columns), None)
+        df_clean['date'] = pd.to_datetime(df_clean[date_col], errors='coerce').dt.strftime('%Y-%m-%d') if date_col else '2024-01-01'
         
-        if date_col:
-            df_clean['date'] = pd.to_datetime(df_clean[date_col], errors='coerce').dt.strftime('%Y-%m-%d')
-        else:
-            print("警告: 日付カラムが見つかりません")
-            df_clean['date'] = '2024-01-01'  # デフォルト日付
-        
-        # テキスト結合（abstruct, memo）
         df_clean['abstruct'] = df_clean.get('摘要', '').fillna('').astype(str)
         df_clean['memo'] = df_clean.get('摘要内容', '').fillna('').astype(str)
         
-        # テキスト正規化と結合（directionも特徴量として追加）
         text_columns = ['abstruct', 'memo']
         df_clean['combined_text'] = ''
         for col in text_columns:
@@ -498,13 +466,8 @@ class CSVProcessor:
                 normalized_text = df_clean[col].fillna('').apply(self.bank_predictor.normalize_text)
                 df_clean['combined_text'] += normalized_text + ' '
         
-        # 取引方向判定
         df_clean['direction'] = self._determine_direction(df_clean)
-        
-        # directionを特徴量として追加
         df_clean['combined_text'] += df_clean['direction'].fillna('') + ' '
-        
-        # 金額計算
         df_clean['amount'] = self._calculate_amount(df_clean)
         
         # 機械学習予測
@@ -512,29 +475,17 @@ class CSVProcessor:
         for idx, row in df_clean.iterrows():
             text = row['combined_text'].strip()
             
-            # subject_code予測
-            subject_result = self.bank_predictor.predict_subject_code_ml(text)
-            if subject_result and subject_result[2] > 0.5:
+            subject_result = self.bank_predictor.predict_subject_code_ml(text, bank='ufj')
+            if subject_result[2] > 0.5:
                 debit, credit = subject_result[0], subject_result[1]
             else:
-                # デフォルト分類
-                if row['direction'] == 'out':
-                    debit, credit = '598', '101'  # 雑費 → UFJ銀行
-                elif row['direction'] == 'in':
-                    debit, credit = '101', '490'  # UFJ銀行 → その他収入
-                else:
-                    debit, credit = '598', '101'
+                debit, credit = ('598', '101') if row['direction'] == 'out' else ('101', '490')
             
-            # subject_codeを3桁に統一（floatの場合は整数変換）
             debit = str(int(float(debit))).zfill(3)
             credit = str(int(float(credit))).zfill(3)
             
-            # remarks予測
-            remarks_result = self.bank_predictor.predict_remarks_ml(text)
-            if remarks_result and remarks_result[1] > 0.5:
-                remarks = remarks_result[0]
-            else:
-                remarks = 'Auto classified'
+            remarks_result = self.bank_predictor.predict_remarks_ml(text, bank='ufj')
+            remarks = remarks_result[0] if remarks_result[1] > 0.5 else 'Auto classified'
             
             predictions.append({
                 'suggested_debit': debit,
@@ -542,12 +493,13 @@ class CSVProcessor:
                 'remarks_classified': remarks
             })
         
-        # 予測結果を追加
-        for i, pred in enumerate(predictions):
-            for key, value in pred.items():
-                df_clean.loc[i, key] = value
+        df_predictions = pd.DataFrame(predictions, index=df_clean.index)
+        df_clean = pd.concat([df_clean, df_predictions], axis=1)
+
+        # ルール適用
+        df_processed = self.bank_predictor.apply_rules(df_clean, 'ufj')
         
-        return df_clean
+        return df_processed
     
     def _determine_direction(self, df: pd.DataFrame) -> pd.Series:
         """取引方向判定"""
@@ -556,53 +508,46 @@ class CSVProcessor:
             out_amount = row.get('支払い金額', 0)
             in_amount = row.get('預かり金額', 0)
             
-            # 金額から判定
             if pd.notna(out_amount) and str(out_amount).replace(',', '').strip():
                 try:
                     if float(str(out_amount).replace(',', '')) > 0:
                         directions.append('out')
                         continue
-                except:
-                    pass
+                except: pass
             
             if pd.notna(in_amount) and str(in_amount).replace(',', '').strip():
                 try:
                     if float(str(in_amount).replace(',', '')) > 0:
                         directions.append('in')
                         continue
-                except:
-                    pass
+                except: pass
             
             directions.append('unknown')
         
-        return pd.Series(directions)
+        return pd.Series(directions, index=df.index)
     
     def _calculate_amount(self, df: pd.DataFrame) -> pd.Series:
         """金額計算"""
         amounts = []
         for _, row in df.iterrows():
-            # 入金チェック
             if '預かり金額' in row and pd.notna(row['預かり金額']) and str(row['預かり金額']).replace(',', '').strip():
                 try:
                     amounts.append(float(str(row['預かり金額']).replace(',', '')))
                     continue
-                except ValueError:
-                    pass
+                except ValueError: pass
             
-            # 出金チェック
             if '支払い金額' in row and pd.notna(row['支払い金額']) and str(row['支払い金額']).replace(',', '').strip():
                 try:
                     amounts.append(float(str(row['支払い金額']).replace(',', '')))
                     continue
-                except ValueError:
-                    pass
+                except ValueError: pass
             
             amounts.append(0.0)
         
-        return pd.Series(amounts)
+        return pd.Series(amounts, index=df.index)
     
     def _convert_to_double_entry(self, df: pd.DataFrame) -> pd.DataFrame:
-        """複式簿記形式に変換"""
+        """複式簿記形式に変換（ルール適用後のカラムを使用）"""
         entries = []
         
         for idx, row in df.iterrows():
@@ -611,31 +556,18 @@ class CSVProcessor:
                 continue
                 
             date = row.get('date', '')
-            remarks = row.get('remarks_classified', '')
-            debit_code = row.get('suggested_debit', '')
-            credit_code = row.get('suggested_credit', '')
+            remarks = row.get('final_remarks', 'classified') 
+            debit_code = row.get('final_debit', '')
+            credit_code = row.get('final_credit', '')
             
-            import random
-            set_id = random.randint(1000, 9999)  # 整数のSetID
-            amount_int = int(round(float(amount)))  # 整数のAmount
+            # SetIDを日付とインデックスから生成
+            set_id_suffix = str(idx).zfill(3)
+            set_id = f"{pd.to_datetime(date).strftime('%Y%m%d')}_{set_id_suffix}"
             
-            # 借方エントリ
-            entries.append({
-                'Date': date,
-                'SubjectCode': debit_code,
-                'Amount': amount_int,
-                'Remarks': remarks,
-                'SetID': set_id
-            })
+            amount_int = int(round(float(amount)))
             
-            # 貸方エントリ
-            entries.append({
-                'Date': date,
-                'SubjectCode': credit_code,
-                'Amount': -amount_int,
-                'Remarks': remarks,
-                'SetID': set_id
-            })
+            entries.append({'Date': date, 'SubjectCode': debit_code, 'Amount': amount_int, 'Remarks': remarks, 'SetID': set_id})
+            entries.append({'Date': date, 'SubjectCode': credit_code, 'Amount': -amount_int, 'Remarks': remarks, 'SetID': set_id})
         
         return pd.DataFrame(entries)
     
@@ -644,54 +576,45 @@ class CSVProcessor:
         if df.empty:
             return 0
         
-        # データベース形式に変換
         df_db = df.copy()
         df_db['date'] = pd.to_datetime(df_db['Date']).dt.date
-        df_db['set_id'] = df_db['SetID'].astype(int)  # 整数のSetID
-        # subject_codeを整数に変換（文字列の場合も対応）
+        df_db['set_id'] = df_db['SetID'].astype(str)
         df_db['subject_code'] = df_db['SubjectCode'].apply(lambda x: int(float(str(x))))
-        df_db['amount'] = df_db['Amount'].astype(int)  # 整数のAmount
+        df_db['amount'] = df_db['Amount'].astype(int)
         df_db['remarks'] = df_db['Remarks']
         df_db['source_file'] = source_filename
-        
-        # 科目名マッピング
         df_db['subject'] = df_db['subject_code'].map(SUBJECT_CODES).fillna('Unknown')
-        
-        # 年月追加
         df_db['year'] = pd.to_datetime(df_db['Date']).dt.year
         df_db['month'] = pd.to_datetime(df_db['Date']).dt.month
         
-        # エントリID生成
-        df_db['entry_id'] = range(1, len(df_db) + 1)
-        
-        # データベース保存
+        # set_id ごとに EntryID を生成
+        df_db['entry_id'] = df_db.groupby('set_id').cumcount()
+        df_db['entry_id'] = df_db['set_id'] + '_' + df_db['entry_id'].astype(str).str.zfill(3)
+
         with self.db.get_connection() as conn:
             df_db[['date', 'set_id', 'entry_id', 'subject_code', 'amount', 'remarks', 'subject', 'year', 'month', 'source_file']].to_sql(
-                'temp_journal', 
-                conn, 
-                if_exists='append', 
-                index=False
+                'temp_journal', conn, if_exists='append', index=False
             )
         
         return len(df_db)
     
-    def _process_jcb_csv_to_db(self, file_path: str, source_filename: str) -> int:
-        """JCB CSVを処理してデータベースに保存"""
+    def _process_jcb_csv_to_file(self, file_path: str, source_filename: str) -> int:
+        """JCB CSVを処理してprocess/ディレクトリにCSVファイルとして保存"""
         
         # CSV読み込み
         try:
             df = pd.read_csv(file_path, encoding='shift_jis')
-            print(f"CSV読み込み完了（shift_jis）: {len(df)}行")
+            logger.info(f"CSV読み込み完了（shift_jis）: {len(df)}行")
         except UnicodeDecodeError:
             try:
                 df = pd.read_csv(file_path, encoding='utf-8')
-                print(f"CSV読み込み完了（utf-8）: {len(df)}行")
+                logger.info(f"CSV読み込み完了（utf-8）: {len(df)}行")
             except Exception as e:
-                print(f"CSV読み込みエラー: {e}")
+                logger.error(f"CSV読み込みエラー: {e}")
                 return 0
         
         if df.empty:
-            print("CSVファイルが空です")
+            logger.warning("CSVファイルが空です")
             return 0
         
         # JCB CSV処理（機械学習分類）
@@ -703,42 +626,30 @@ class CSVProcessor:
         train_filename = f"jcb_processed_{timestamp}.csv"
         self.bank_predictor.save_training_data(df_processed, train_filename, bank='jcb')
         
-        # 複式簿記形式に変換してDB保存
+        # 複式簿記形式に変換
         entries = self._convert_to_double_entry_jcb(df_processed)
-        saved_count = self._save_entries_to_db(entries, source_filename)
+        
+        # process/ディレクトリにCSVファイルとして保存
+        output_filename = f"jcb_classified_{timestamp}.csv"
+        saved_count = self._save_entries_to_process_dir(entries, output_filename)
         
         return saved_count
     
     def _process_jcb_with_ml(self, df: pd.DataFrame) -> pd.DataFrame:
-        """JCB CSVを機械学習で分類処理"""
+        """JCB CSVを機械学習で分類処理し、ルールを適用"""
         
-        # 必要なカラムが存在するかチェック（JCBカラム名の対応）
+        # (...既存の前処理は省略...)
         date_cols = ['ご利用日', '日付']
-        abstruct_cols = ['ご利用先など', '利用先']  
-        memo_cols = ['備考']
-        out_cols = ['ご利用金額（円）', '利用金額']
+        abstruct_cols = ['ご利用先など', '利用先']
         
-        # データ整理
         df_clean = df.copy()
         
-        # 日付正規化（複数の日付カラム名に対応）
-        date_col = None
-        for col in date_cols:
-            if col in df_clean.columns:
-                date_col = col
-                break
+        date_col = next((col for col in date_cols if col in df_clean.columns), None)
+        df_clean['date'] = pd.to_datetime(df_clean[date_col], errors='coerce').dt.strftime('%Y-%m-%d') if date_col else '2024-01-01'
         
-        if date_col:
-            df_clean['date'] = pd.to_datetime(df_clean[date_col], errors='coerce').dt.strftime('%Y-%m-%d')
-        else:
-            print("警告: 日付カラムが見つかりません")
-            df_clean['date'] = '2024-01-01'  # デフォルト日付
-        
-        # テキスト結合（abstruct, memo）
         df_clean['abstruct'] = df_clean.get('ご利用先など', df_clean.get('利用先', '')).fillna('').astype(str)
         df_clean['memo'] = df_clean.get('備考', '').fillna('').astype(str)
         
-        # テキスト正規化と結合（directionも特徴量として追加）
         text_columns = ['abstruct', 'memo']
         df_clean['combined_text'] = ''
         for col in text_columns:
@@ -746,13 +657,8 @@ class CSVProcessor:
                 normalized_text = df_clean[col].fillna('').apply(self.bank_predictor.normalize_text)
                 df_clean['combined_text'] += normalized_text + ' '
         
-        # 取引方向判定（JCBは出金のみ）
         df_clean['direction'] = 'out'
-        
-        # directionを特徴量として追加
-        df_clean['combined_text'] += df_clean['direction'].fillna('') + ' '
-        
-        # 金額計算
+        df_clean['combined_text'] += df_clean['direction'] + ' '
         df_clean['amount'] = self._calculate_jcb_amount(df_clean)
         
         # 機械学習予測
@@ -760,24 +666,17 @@ class CSVProcessor:
         for idx, row in df_clean.iterrows():
             text = row['combined_text'].strip()
             
-            # subject_code予測（JCB専用モデル使用）
             subject_result = self.bank_predictor.predict_subject_code_ml(text, bank='jcb')
-            if subject_result and subject_result[2] > 0.5:
+            if subject_result[2] > 0.5:
                 debit, credit = subject_result[0], subject_result[1]
             else:
-                # デフォルト分類（JCBは貸方固定）
-                debit, credit = '598', '201'  # 雑費 → JCBカード
+                debit, credit = '598', '201'
             
-            # subject_codeを3桁に統一
             debit = str(int(float(debit))).zfill(3)
             credit = str(int(float(credit))).zfill(3)
             
-            # remarks予測（JCB専用モデル使用）
             remarks_result = self.bank_predictor.predict_remarks_ml(text, bank='jcb')
-            if remarks_result and remarks_result[1] > 0.5:
-                remarks = remarks_result[0]
-            else:
-                remarks = 'JCB Auto classified'
+            remarks = remarks_result[0] if remarks_result[1] > 0.5 else 'JCB Auto classified'
             
             predictions.append({
                 'suggested_debit': debit,
@@ -785,35 +684,29 @@ class CSVProcessor:
                 'remarks_classified': remarks
             })
         
-        # 予測結果を追加
-        for i, pred in enumerate(predictions):
-            for key, value in pred.items():
-                df_clean.loc[i, key] = value
+        df_predictions = pd.DataFrame(predictions, index=df_clean.index)
+        df_clean = pd.concat([df_clean, df_predictions], axis=1)
         
-        return df_clean
+        # ルール適用
+        df_processed = self.bank_predictor.apply_rules(df_clean, 'jcb')
+        
+        return df_processed
     
     def _calculate_jcb_amount(self, df: pd.DataFrame) -> pd.Series:
         """JCB金額計算"""
         amounts = []
-        for _, row in df.iterrows():
-            # JCBの利用金額チェック
-            amount_cols = ['ご利用金額（円）', '利用金額']
-            amount = 0
-            
-            for col in amount_cols:
-                if col in row and pd.notna(row[col]) and str(row[col]).replace(',', '').strip():
-                    try:
-                        amount = float(str(row[col]).replace(',', ''))
-                        break
-                    except ValueError:
-                        pass
-            
-            amounts.append(amount)
+        amount_cols = ['ご利用金額(￥)', 'ご利用金額（円）', '利用金額']
+        amount_col = next((col for col in amount_cols if col in df.columns), None)
         
-        return pd.Series(amounts)
+        if amount_col:
+            amounts = pd.to_numeric(df[amount_col].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+        else:
+            amounts = pd.Series([0.0] * len(df), index=df.index)
+            
+        return amounts
     
     def _convert_to_double_entry_jcb(self, df: pd.DataFrame) -> pd.DataFrame:
-        """JCB複式簿記形式に変換"""
+        """JCB複式簿記形式に変換（ルール適用後のカラムを使用）"""
         entries = []
         
         for idx, row in df.iterrows():
@@ -822,31 +715,18 @@ class CSVProcessor:
                 continue
                 
             date = row.get('date', '')
-            remarks = row.get('remarks_classified', '')
-            debit_code = row.get('suggested_debit', '')
-            credit_code = row.get('suggested_credit', '201')  # JCBカードに固定
+            remarks = row.get('final_remarks', 'classified')
+            debit_code = row.get('final_debit', '598')
+            credit_code = row.get('final_credit', '201')
             
-            import random
-            set_id = random.randint(1000, 9999)  # 整数のSetID
-            amount_int = int(round(float(amount)))  # 整数のAmount
+            # SetIDを日付とインデックスから生成
+            set_id_suffix = str(idx).zfill(3)
+            set_id = f"{pd.to_datetime(date).strftime('%Y%m%d')}_{set_id_suffix}"
+
+            amount_int = int(round(float(amount)))
             
-            # 借方エントリ（費用）
-            entries.append({
-                'Date': date,
-                'SubjectCode': debit_code,
-                'Amount': amount_int,
-                'Remarks': remarks,
-                'SetID': set_id
-            })
-            
-            # 貸方エントリ（JCBカード）
-            entries.append({
-                'Date': date,
-                'SubjectCode': credit_code,
-                'Amount': -amount_int,
-                'Remarks': remarks,
-                'SetID': set_id
-            })
+            entries.append({'Date': date, 'SubjectCode': debit_code, 'Amount': amount_int, 'Remarks': remarks, 'SetID': set_id})
+            entries.append({'Date': date, 'SubjectCode': credit_code, 'Amount': -amount_int, 'Remarks': remarks, 'SetID': set_id})
         
         return pd.DataFrame(entries)
 
@@ -863,7 +743,7 @@ class CSVProcessor:
         try:
             year, month = map(int, year_month.split('-'))
         except ValueError:
-            print(f"無効な年月形式です: {year_month}。YYYY-MM形式で入力してください。")
+            logger.error(f"無効な年月形式です: {year_month}。YYYY-MM形式で入力してください。")
             return
         
         # 月末日を計算
@@ -882,18 +762,18 @@ class CSVProcessor:
                 existing_close = conn.execute(check_query, {'year': year, 'month': month}).fetchone()
                 
                 if existing_close.count > 0:
-                    print(f"{year}年{month}月は既に締切処理済みです。再締切する場合は--recloseフラグを使用してください。")
+                    logger.info(f"{year}年{month}月は既に締切処理済みです。再締切する場合は--recloseフラグを使用してください。")
                     return
             else:
                 # 再締切の場合、既存の締切仕訳を削除
-                print(f"{year}年{month}月の既存の締切仕訳を削除します...")
+                logger.info(f"{year}年{month}月の既存の締切仕訳を削除します...")
                 delete_query = text("""
                     DELETE FROM journal_entries
                     WHERE remarks = 'close' AND year = :year AND month = :month
                 """)
                 deleted_count = conn.execute(delete_query, {'year': year, 'month': month}).rowcount
                 if deleted_count > 0:
-                    print(f"既存の締切仕訳 {deleted_count}件を削除しました。")
+                    logger.info(f"既存の締切仕訳 {deleted_count}件を削除しました。")
             
             # 1. 指定月の損益科目の残高を集計
             query = text("""
@@ -908,7 +788,7 @@ class CSVProcessor:
             pl_balances = conn.execute(query, {'year': year, 'month': month}).fetchall()
 
             if not pl_balances:
-                print(f"{year}年{month}月の締切対象の損益取引がありません。")
+                logger.info(f"{year}年{month}月の締切対象の損益取引がありません。")
                 return
 
             net_income = sum(row.balance for row in pl_balances)
@@ -945,9 +825,41 @@ class CSVProcessor:
                 conn.commit()
                 
                 if reclose:
-                    print(f"{year}年{month}月の再締切処理が完了しました。純損益: {net_income:,.0f}円")
+                    logger.info(f"{year}年{month}月の再締切処理が完了しました。純損益: {net_income:,.0f}円")
                 else:
-                    print(f"{year}年{month}月の締切処理が完了しました。純損益: {net_income:,.0f}円")
+                    logger.info(f"{year}年{month}月の締切処理が完了しました。純損益: {net_income:,.0f}円")
 
             except Exception as e:
-                print(f"エラーが発生したため、締切処理に失敗しました: {e}")
+                logger.error(f"エラーが発生したため、締切処理に失敗しました: {e}")
+
+    def _save_entries_to_process_dir(self, df: pd.DataFrame, filename: str) -> int:
+        """エントリをprocess/ディレクトリにCSVファイルとして保存"""
+        if df.empty:
+            return 0
+        
+        # process/ディレクトリのパスを取得
+        output_path = PROCESS_DIR / filename
+        
+        # 標準的なCSV形式で保存
+        df.to_csv(output_path, index=False, encoding='utf-8')
+        
+        logger.info(f"分類結果をCSVファイルとして保存しました: {output_path} ({len(df)}行)")
+        return len(df)
+
+    def _parse_date(self, date_str):
+        """日付パース"""
+        if pd.isna(date_str):
+            return pd.NaT
+        
+        date_str = str(date_str).strip()
+        
+        # YYYYMMDD形式
+        if len(date_str) == 8 and date_str.isdigit():
+            return pd.to_datetime(date_str, format='%Y%m%d', errors='coerce')
+        
+        # YYYY-MM-DD形式
+        try:
+            return pd.to_datetime(date_str, errors='coerce')
+        except:
+            return pd.NaT
+    

@@ -9,7 +9,7 @@ import sys
 sys.path.append(str(Path(__file__).parent.parent))
 
 from ledger_ingest.processor import CSVProcessor
-from ledger_ingest.models import DatabaseManager
+from ledger_ingest.database import DatabaseManager
 
 
 class TestMonthEndProcessing:

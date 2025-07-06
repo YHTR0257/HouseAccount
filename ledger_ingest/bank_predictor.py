@@ -2,7 +2,7 @@ import yaml
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.pipeline import Pipeline
@@ -21,6 +21,7 @@ logger = get_logger(__name__)
 class BankPredictor:
     """
     統合銀行予測器 - 2つのモデル: subject_code予測 + remarks予測
+    ルールベースの上書き機能付き
     """
     
     def __init__(self, config_dir: str = "config", model_dir: str = "models"):
@@ -28,8 +29,7 @@ class BankPredictor:
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(exist_ok=True)
         
-        # モデル読み込み（UFJ/JCB用）
-        # 1. subject_code予測モデル（debit/credit科目コードペア）
+        # モデル読���込み（UFJ/JCB用）
         self.models = {}
         self.encoders = {}
         
@@ -69,9 +69,145 @@ class BankPredictor:
         self.kakasi.setMode('J', 'a')  # 漢字をローマ字に
         self.conv = self.kakasi.getConverter()
 
-    
+        # ルール読み込み
+        self.rules = self._load_rules(self.config_dir / 'override_rules.csv')
+
+    def _load_rules(self, csv_path: Path) -> pd.DataFrame:
+        """ルールCSVを読み込む"""
+        if not csv_path.exists():
+            logger.info("ルールファイルが見つかりません。ルールベースの上書きは行われません。")
+            return pd.DataFrame()
+
+        try:
+            logger.info(f"ルールファイルを読み込みます: {csv_path}")
+            rules_df = pd.read_csv(csv_path)
+            return self._validate_rules_format(rules_df)
+        except Exception as e:
+            logger.error(f"ルールファイルの読み込みに失敗しました: {e}")
+            return pd.DataFrame()
+
+    def _validate_rules_format(self, rules_df: pd.DataFrame) -> pd.DataFrame:
+        """ルールCSVの形式を検証"""
+        required_columns = ['target_bank', 'keyword', 'direction']
+        missing_columns = [col for col in required_columns if col not in rules_df.columns]
+        
+        if missing_columns:
+            logger.error(f"ルールCSVに必須カラムが不足しています: {missing_columns}")
+            return pd.DataFrame()
+
+        # データ型の検証と修正
+        rules_df = rules_df.copy()
+        
+        # 空文字列をNaNに変換
+        rules_df = rules_df.replace('', pd.NA)
+        
+        # target_bankの検証
+        valid_banks = ['ufj', 'jcb', 'all']
+        invalid_banks = rules_df[~rules_df['target_bank'].isin(valid_banks)]['target_bank'].unique()
+        if len(invalid_banks) > 0:
+            logger.warning(f"無効なtarget_bank値が見つかりました: {invalid_banks}")
+            rules_df = rules_df[rules_df['target_bank'].isin(valid_banks)]
+
+        # directionの検証
+        valid_directions = ['in', 'out']
+        invalid_directions = rules_df[~rules_df['direction'].isin(valid_directions)]['direction'].unique()
+        if len(invalid_directions) > 0:
+            logger.warning(f"無効なdirection値が見つかりました: {invalid_directions}")
+            rules_df = rules_df[rules_df['direction'].isin(valid_directions)]
+
+        # keywordが空でないことを確認
+        empty_keywords = rules_df['keyword'].isna() | (rules_df['keyword'].astype(str).str.strip() == '')
+        if empty_keywords.any():
+            logger.warning(f"空のkeywordを持つルールが{empty_keywords.sum()}件見つかりました。これらは無視されます。")
+            rules_df = rules_df[~empty_keywords]
+
+        logger.info(f"有効なルール{len(rules_df)}件を読み込みました")
+        return rules_df
+
+    def apply_rules(self, df: pd.DataFrame, bank_type: str) -> pd.DataFrame:
+        """
+        ML予測結果にルールを適用して上書きする
+        """
+        if self.rules.empty:
+            return self._set_default_final_values(df)
+
+        applicable_rules = self._get_applicable_rules(bank_type)
+        df = self._set_default_final_values(df)
+        df['rule_applied'] = False
+
+        for index, row in df.iterrows():
+            combined_text = str(row.get('combined_text', ''))
+            direction = row.get('direction', '')
+
+            matched_rule = self._find_matching_rule(applicable_rules, combined_text, direction)
+            if matched_rule is not None:
+                df = self._apply_single_rule(df, index, matched_rule, direction, bank_type)
+                df.loc[index, 'rule_applied'] = True
+        
+        applied_count = df['rule_applied'].sum()
+        if applied_count > 0:
+            logger.info(f"ルール適用: {applied_count}件の取引が上書きされました。")
+
+        return df
+
+    def _set_default_final_values(self, df: pd.DataFrame) -> pd.DataFrame:
+        """最終値のデフォルト設定"""
+        df['final_debit'] = df['suggested_debit']
+        df['final_credit'] = df['suggested_credit']
+        df['final_remarks'] = df['remarks_classified']
+        return df
+
+    def _get_applicable_rules(self, bank_type: str) -> pd.DataFrame:
+        """適用可能なルールを取得"""
+        return self.rules[
+            (self.rules['target_bank'] == bank_type) | (self.rules['target_bank'] == 'all')
+        ].copy()
+
+    def _find_matching_rule(self, rules: pd.DataFrame, combined_text: str, direction: str):
+        """マッチするルールを検索"""
+        for _, rule in rules.iterrows():
+            keyword = str(rule.get('keyword', ''))
+            if keyword:
+                # キーワードも正規化して比較
+                normalized_keyword = self.normalize_text(keyword)
+                if normalized_keyword and normalized_keyword in combined_text and direction == rule.get('direction'):
+                    return rule
+        return None
+
+    def _apply_single_rule(self, df: pd.DataFrame, index: int, rule, direction: str, bank_type: str) -> pd.DataFrame:
+        """単一ルールを適用"""
+        # 借方(Debit)の決定
+        new_debit_code = rule.get('new_debit_code')
+        if pd.notna(new_debit_code) and str(new_debit_code).strip():
+            try:
+                df.loc[index, 'final_debit'] = str(int(float(new_debit_code))).zfill(3)
+            except (ValueError, TypeError):
+                logger.warning(f"無効な借方コード: {new_debit_code}")
+        elif direction == 'in' and bank_type == 'ufj':
+            df.loc[index, 'final_debit'] = '101'  # UFJ銀行
+        
+        # 貸方(Credit)の決定
+        new_credit_code = rule.get('new_credit_code')
+        if pd.notna(new_credit_code) and str(new_credit_code).strip():
+            try:
+                df.loc[index, 'final_credit'] = str(int(float(new_credit_code))).zfill(3)
+            except (ValueError, TypeError):
+                logger.warning(f"無効な貸方コード: {new_credit_code}")
+        elif direction == 'out':
+            if bank_type == 'ufj':
+                df.loc[index, 'final_credit'] = '101'  # UFJ銀行
+            elif bank_type == 'jcb':
+                df.loc[index, 'final_credit'] = '201'  # JCBカード
+
+        # 備考(Remarks)の決定
+        new_remarks = rule.get('new_remarks')
+        if pd.notna(new_remarks):
+            df.loc[index, 'final_remarks'] = str(new_remarks)
+        
+        return df
+
     def normalize_text(self, text: str) -> str:
-        """テキスト正規化：全角→半角、日本語→ローマ字"""
+        """テキスト正規化���全角→半角、日本語→ローマ字"""
         if pd.isna(text) or not text:
             return ""
         
@@ -105,10 +241,10 @@ class BankPredictor:
         if model_file.exists():
             try:
                 model = joblib.load(model_file)
-                print(f"subject_codeモデル読み込み完了: {bank.upper()}")
+                logger.info(f"subject_codeモデル読み込み完了: {bank.upper()}")
                 return model
             except Exception as e:
-                print(f"subject_codeモデル読み込み失敗: {e}")
+                logger.error(f"subject_codeモデル読み込み失敗: {e}")
         return None
     
     def _load_subject_code_encoder(self, bank: str = 'ufj'):
@@ -118,7 +254,7 @@ class BankPredictor:
             try:
                 return joblib.load(encoder_file)
             except Exception as e:
-                print(f"subject_codeエンコーダー読み込み失敗: {e}")
+                logger.error(f"subject_codeエンコーダー読み込み失敗: {e}")
         return None
     
     def _load_remarks_model(self, bank: str = 'ufj'):
@@ -127,10 +263,10 @@ class BankPredictor:
         if model_file.exists():
             try:
                 model = joblib.load(model_file)
-                print(f"remarksモデル読み込み完了: {bank.upper()}")
+                logger.info(f"remarksモデル読み込み完了: {bank.upper()}")
                 return model
             except Exception as e:
-                print(f"remarksモデル読み込み失敗: {e}")
+                logger.error(f"remarksモデル読み込み失敗: {e}")
         return None
     
     def _load_remarks_encoder(self, bank: str = 'ufj'):
@@ -140,17 +276,17 @@ class BankPredictor:
             try:
                 return joblib.load(encoder_file)
             except Exception as e:
-                print(f"remarksエンコーダー読み込み失敗: {e}")
+                logger.error(f"remarksエンコーダー読み込み失敗: {e}")
         return None
     
     
-    def predict_subject_code_ml(self, text: str, bank: str = 'ufj') -> Optional[Tuple[str, str, float]]:
+    def predict_subject_code_ml(self, text: str, bank: str = 'ufj') -> Tuple[str, str, float]:
         """subject_code機械学習予測"""
         model = self.models.get(bank, {}).get('subject_code')
         encoder = self.encoders.get(bank, {}).get('subject_code')
         
         if not model or not encoder:
-            return None
+            return ('598', '101', 0.0)  # デフォルト: 雑費→UFJ銀行
         
         try:
             # 特徴量作成
@@ -165,16 +301,16 @@ class BankPredictor:
             
             return (debit, credit, max_prob)
         except Exception as e:
-            print(f"subject_code予測エラー: {e}")
-            return None
+            logger.error(f"subject_code予測エラー: {e}")
+            return ('598', '101', 0.0)  # エラー時もデフォルト値を返却
     
-    def predict_remarks_ml(self, text: str, bank: str = 'ufj') -> Optional[Tuple[str, float]]:
+    def predict_remarks_ml(self, text: str, bank: str = 'ufj') -> Tuple[str, float]:
         """remarks機械学習予測"""
         model = self.models.get(bank, {}).get('remarks')
         encoder = self.encoders.get(bank, {}).get('remarks')
         
         if not model or not encoder:
-            return None
+            return ('Auto classified', 0.0)  # デフォルト備考
         
         try:
             # 特徴量作成
@@ -188,8 +324,8 @@ class BankPredictor:
             
             return (predicted_remarks, max_prob)
         except Exception as e:
-            print(f"remarks予測エラー: {e}")
-            return None
+            logger.error(f"remarks予測エラー: {e}")
+            return ('Auto classified', 0.0)  # エラー時もデフォルト値を返却
     
     
     def get_training_data(self, target: str = 'subject_code', bank: str = 'ufj') -> pd.DataFrame:
@@ -206,7 +342,7 @@ class BankPredictor:
             try:
                 df = pd.read_csv(csv_file, encoding='utf-8')
                 
-                # テキストカラムを結合（combined_textがない場合）
+                # テキストカラムを��合（combined_textがない場合）
                 if 'combined_text' not in df.columns:
                     text_columns = []
                     for col in ['abstruct', 'memo']:
@@ -253,7 +389,7 @@ class BankPredictor:
                     
                         
             except Exception as e:
-                print(f"学習データ読み込みエラー ({csv_file}): {e}")
+                logger.error(f"学習データ読み込みエラー ({csv_file}): {e}")
                 continue
         
         if training_data:
@@ -301,13 +437,13 @@ class BankPredictor:
                     self.subject_code_model = pipeline
                     self.subject_code_encoder = subject_code_encoder
                 
-                print(f"subject_codeモデル学習完了: {bank.upper()} ({len(subject_code_data)}件)")
+                logger.info(f"subject_codeモデル学習完了: {bank.upper()} ({len(subject_code_data)}件)")
                 success_count += 1
                 
             except Exception as e:
-                print(f"subject_codeモデル学習失敗: {e}")
+                logger.error(f"subject_codeモデル学習失敗: {e}")
         else:
-            print(f"subject_code学習データ不足: {bank.upper()} ({len(subject_code_data)}件)")
+            logger.warning(f"subject_code学習データ不足: {bank.upper()} ({len(subject_code_data)}件)")
         
         # 2. remarksモデル学習
         remarks_data = self.get_training_data('remarks', bank)
@@ -342,13 +478,13 @@ class BankPredictor:
                     self.remarks_model = remarks_pipeline
                     self.remarks_encoder = remarks_label_encoder
                 
-                print(f"remarksモデル学習完了: {bank.upper()} ({len(remarks_data)}件)")
+                logger.info(f"remarksモデル学習完了: {bank.upper()} ({len(remarks_data)}件)")
                 success_count += 1
                 
             except Exception as e:
-                print(f"remarksモデル学習失敗: {e}")
+                logger.error(f"remarksモデル学習失敗: {e}")
         else:
-            print(f"remarks学習データ不足: {bank.upper()} ({len(remarks_data)}件)")
+            logger.warning(f"remarks学習データ不足: {bank.upper()} ({len(remarks_data)}件)")
         
         
         return success_count > 0
@@ -375,5 +511,5 @@ class BankPredictor:
         output_path = train_dir / filename
         df_filtered.to_csv(output_path, index=False, encoding='utf-8')
         
-        print(f"学習データ保存: {output_path} ({len(df_filtered)}行, 保存列: {available_columns})")
+        logger.info(f"学習データ保存: {output_path} ({len(df_filtered)}行, 保存列: {available_columns})")
         return str(output_path)

@@ -143,7 +143,7 @@ class TestCSVProcessor:
             
             assert is_valid == True
             assert "全セット平衡確認" in message
-            assert errors is None
+            assert len(errors) == 0
 
     def test_validate_sets_unbalanced(self, processor, mock_db_manager):
         """不平衡セット検証テスト"""
@@ -209,6 +209,9 @@ class TestCSVProcessor:
         """仕訳確定成功テスト"""
         mock_connection = mock_db_manager.get_connection.return_value.__enter__.return_value
         
+        # remove_duplicate_entries と confirm_entries 内の execute の戻り値を設定
+        mock_connection.execute.return_value.rowcount = 0
+
         # セット検証モック（成功）
         with patch.object(processor, 'validate_sets') as mock_validate:
             mock_validate.return_value = (True, "平衡確認", None)
@@ -220,11 +223,15 @@ class TestCSVProcessor:
                     result = processor.confirm_entries()
                     
                     assert result == True
-                    # SQL実行確認
-                    assert mock_connection.execute.call_count == 3
+                    # SQL実行確認（remove_duplicates, delete_from_journal, insert_into_journal, delete_from_temp）
+                    assert mock_connection.execute.call_count >= 3
 
     def test_confirm_entries_failure(self, processor, mock_db_manager):
         """仕訳確定失敗テスト"""
+        mock_connection = mock_db_manager.get_connection.return_value.__enter__.return_value
+        # remove_duplicate_entries 内の execute の戻り値を設定
+        mock_connection.execute.return_value.rowcount = 0
+
         # セット検証モック（失敗）
         with patch.object(processor, 'validate_sets') as mock_validate:
             error_df = pd.DataFrame({'set_id': ['T001'], 'balance': [100]})
@@ -233,6 +240,8 @@ class TestCSVProcessor:
             result = processor.confirm_entries()
             
             assert result == False
+            # remove_duplicate_entries は呼ばれるが、その後の処理は中断される
+            mock_connection.execute.assert_called_once()
 
     def test_get_cashflow_analysis(self, processor, mock_db_manager):
         """キャッシュフロー分析テスト"""

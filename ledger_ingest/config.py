@@ -20,6 +20,7 @@ PROCESS_DIR = DATA_DIR / 'process'
 # Create directories if they don't exist
 TEMP_UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
 CONFIRMED_DIR.mkdir(parents=True, exist_ok=True)
+PROCESS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Load subject codes from JSON
 with open(CONFIG_DIR / 'codes.json', 'r', encoding='utf-8') as f:
