@@ -3,7 +3,7 @@ import shutil
 from pathlib import Path
 from sqlalchemy import text
 from typing import Optional, Tuple, Dict
-from .models import DatabaseManager
+from .database import db_manager
 import os
 import datetime
 from .config import SUBJECT_CODES, TEMP_UPLOADS_DIR, CONFIRMED_DIR, BALANCE_TOLERANCE
@@ -14,9 +14,9 @@ class CSVProcessor:
     """
     統合CSV処理クラス - ファイル処理とデータベース操作を一元化
     """
-    def __init__(self, db_manager: Optional[DatabaseManager] = None) -> None:
+    def __init__(self) -> None:
         # データベース処理用
-        self.db: DatabaseManager = db_manager or DatabaseManager()
+        self.db = db_manager
         # 銀行分類器
         self.bank_predictor = BankPredictor()
 

@@ -1,7 +1,7 @@
 import sys
 import datetime
 from pathlib import Path
-from .models import DatabaseManager
+from .database import db_manager
 from .processor import CSVProcessor
 
 
@@ -27,8 +27,7 @@ def main():
     command = sys.argv[1]
 
     if command == 'init':
-        db = DatabaseManager()
-        db.init_tables()
+        db_manager.init_tables()
         print("データベース初期化完了")
 
     elif command == 'process' and len(sys.argv) > 2:

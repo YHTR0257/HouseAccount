@@ -60,7 +60,11 @@ class TestMonthEndProcessing:
         with patch('pandas.DataFrame.to_sql', capture_df):
             with patch('pandas.read_sql') as mock_read_sql:
                 mock_read_sql.return_value = pd.DataFrame({'count': [0]})
-                with patch.object(processor.db, 'get_connection'):
+                with patch.object(processor.db, 'get_connection') as mock_get_conn:
+                    # connectionオブジェクトのモック設定
+                    mock_conn = mock_get_conn.return_value.__enter__.return_value
+                    mock_result = mock_conn.execute.return_value
+                    mock_result.rowcount = 0  # rowcountを整数値に設定
                     processor.process_csv_for_database(temp_financial_csv)
         
         assert captured_df is not None
@@ -164,7 +168,11 @@ class TestMonthEndProcessing:
     def test_complete_month_end_workflow(self, processor, temp_financial_csv):
         """完全な月末処理ワークフローテスト"""
         # ステップ1: CSV処理
-        with patch.object(processor.db, 'get_connection'):
+        with patch.object(processor.db, 'get_connection') as mock_get_conn:
+            # connectionオブジェクトのモック設定
+            mock_conn = mock_get_conn.return_value.__enter__.return_value
+            mock_result = mock_conn.execute.return_value
+            mock_result.rowcount = 0  # rowcountを整数値に設定
             with patch('pandas.DataFrame.to_sql'):
                 with patch('pandas.read_sql') as mock_read_sql:
                     mock_read_sql.return_value = pd.DataFrame({'count': [0]})
@@ -270,7 +278,10 @@ class TestMonthEndProcessing:
                 mock_context_manager.__exit__.return_value = None
                 
                 with patch.object(processor.db, 'get_connection') as mock_get_conn:
-                    mock_get_conn.return_value = mock_context_manager
+                    # connectionオブジェクトのモック設定
+                    mock_conn = mock_get_conn.return_value.__enter__.return_value
+                    mock_result = mock_conn.execute.return_value
+                    mock_result.rowcount = 0  # rowcountを整数値に設定
                     with patch('pandas.DataFrame.to_sql') as mock_to_sql:
                         with patch('pandas.read_sql') as mock_read_sql:
                             mock_read_sql.return_value = pd.DataFrame({'count': [0]})
@@ -295,7 +306,11 @@ class TestMonthEndProcessing:
         with patch('pandas.DataFrame.to_sql', capture_df):
             with patch('pandas.read_sql') as mock_read_sql:
                 mock_read_sql.return_value = pd.DataFrame({'count': [0]})
-                with patch.object(processor.db, 'get_connection'):
+                with patch.object(processor.db, 'get_connection') as mock_get_conn:
+                    # connectionオブジェクトのモック設定
+                    mock_conn = mock_get_conn.return_value.__enter__.return_value
+                    mock_result = mock_conn.execute.return_value
+                    mock_result.rowcount = 0  # rowcountを整数値に設定
                     processor.process_csv_for_database(temp_financial_csv)
         
         assert captured_df is not None

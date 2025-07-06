@@ -12,7 +12,7 @@ import os
 import unicodedata
 import pykakasi
 import jaconv
-from .models import DatabaseManager
+from .database import DatabaseManager
 from sqlalchemy import text
 
 import logging

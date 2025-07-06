@@ -8,14 +8,14 @@ import sys
 from pathlib import Path
 import pandas as pd
 from sqlalchemy import text
-from .models import DatabaseManager
+from .database import db_manager
 from .config import BALANCE_TOLERANCE
 
 class QueryHelper:
     """データベースクエリヘルパー"""
     
     def __init__(self):
-        self.db = DatabaseManager()
+        self.db = db_manager
     
     def show_table_summary(self):
         """テーブル概要表示"""
