@@ -265,6 +265,11 @@ temp/
 tmp/
 *.tmp
 
+# キャッシュファイル
+cache/
+data/redis/
+redis/
+
 # 出力ファイル
 output/
 reports/
