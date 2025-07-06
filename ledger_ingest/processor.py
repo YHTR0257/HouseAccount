@@ -6,9 +6,11 @@ from typing import Optional, Tuple, Dict
 from .database import db_manager
 import os
 import datetime
-from .config import SUBJECT_CODES, TEMP_UPLOADS_DIR, CONFIRMED_DIR, BALANCE_TOLERANCE
+from .config import SUBJECT_CODES, TEMP_UPLOADS_DIR, CONFIRMED_DIR, BALANCE_TOLERANCE, get_logger
 from .bank_predictor import BankPredictor
 from random import randint
+
+logger = get_logger(__name__)
 
 class CSVProcessor:
     """
@@ -48,9 +50,9 @@ class CSVProcessor:
                 ).iloc[0]['count']
                 
                 if existing_count > 0:
-                    print(f"警告: ファイル '{source_filename}' は既に処理済みです（{existing_count}行）")
+                    logger.warning(f"ファイル '{source_filename}' は既に処理済みです ({existing_count}行)")
                     if not clear_temp:
-                        print("重複処理をスキップします。clear_temp=Trueで強制処理可能です。")
+                        logger.info("重複処理をスキップします (clear_temp=Trueで強制処理可能)")
                         return 0
         
         # temp_journalテーブルクリア
@@ -58,7 +60,7 @@ class CSVProcessor:
             with self.db.get_connection() as conn:
                 deleted_count = conn.execute(text("DELETE FROM temp_journal")).rowcount
                 if deleted_count > 0:
-                    print(f"temp_journalテーブルをクリアしました（{deleted_count}行削除）")
+                    logger.info(f"temp_journalテーブルをクリアしました ({deleted_count}行削除)")
         
         df = pd.read_csv(file_path)
 
@@ -89,8 +91,8 @@ class CSVProcessor:
         # 日付パースに失敗した行をチェック
         invalid_dates = df[df['Date'].isna()]
         if len(invalid_dates) > 0:
-            print(f"警告: {len(invalid_dates)}行の日付をパースできませんでした")
-            print(invalid_dates[['Date']].head())
+            logger.warning(f"{len(invalid_dates)}行の日付をパースできませんでした")
+            logger.debug(f"無効な日付データ: {invalid_dates[['Date']].head().to_string()}")
             # 無効な日付の行を除外
             df = df.dropna(subset=['Date'])
         
@@ -214,8 +216,8 @@ class CSVProcessor:
         # セット検証
         is_valid, message, errors = self.validate_sets()
         if not is_valid:
-            print(f"エラー: {message}")
-            print(errors)
+            logger.error(f"セット検証エラー: {message}")
+            logger.error(f"エラー詳細: {errors}")
             return False
 
         with self.db.get_connection() as conn:

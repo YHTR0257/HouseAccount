@@ -9,7 +9,9 @@ from pathlib import Path
 import pandas as pd
 from sqlalchemy import text
 from .database import db_manager
-from .config import BALANCE_TOLERANCE
+from .config import BALANCE_TOLERANCE, get_logger
+
+logger = get_logger(__name__)
 
 class QueryHelper:
     """データベースクエリヘルパー"""
@@ -45,9 +47,15 @@ class QueryHelper:
         WHERE EXISTS (SELECT 1 FROM journal_entries)
         """
         
-        with self.db.get_connection() as conn:
-            result = pd.read_sql(text(query), conn)
-            print(result.to_string(index=False))
+        try:
+            logger.debug("テーブル概要クエリを実行します")
+            with self.db.get_connection() as conn:
+                result = pd.read_sql(text(query), conn)
+                print(result.to_string(index=False))
+                logger.debug("テーブル概要表示が完了しました")
+        except Exception as e:
+            logger.error(f"テーブル概要表示でエラーが発生しました: {e}")
+            print("エラー: テーブル概要を取得できませんでした")
     
     def check_duplicates(self):
         """重複チェック"""
@@ -156,7 +164,7 @@ class QueryHelper:
         """最近の確定処理結果"""
         print(f"\n=== 最近{days}日間の確定処理 ===")
         
-        query = """
+        query = f"""
         SELECT 
             date,
             set_id,
@@ -165,10 +173,10 @@ class QueryHelper:
             string_agg(subject_code::text || ':' || amount::text, ', ') as entries,
             confirmed_at::date as confirmed_date
         FROM journal_entries 
-        WHERE confirmed_at >= CURRENT_DATE - INTERVAL '%s days'
+        WHERE confirmed_at >= CURRENT_DATE - INTERVAL '{days} day'
         GROUP BY date, set_id, confirmed_at::date
-        ORDER BY confirmed_at DESC, date, set_id
-        """ % days
+        ORDER BY confirmed_at::date DESC, date, set_id
+        """
         
         with self.db.get_connection() as conn:
             result = pd.read_sql(text(query), conn)

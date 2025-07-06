@@ -1,64 +1,145 @@
+x-superset-image: &superset-image apachesuperset.docker.scarf.sh/apache/superset:${TAG:-latest}
+x-superset-volumes: &superset-volumes
+  - type: bind
+    source: ./superset/docker
+    target: /app/docker
+  - type: bind
+    source: ./scripts
+    target: /app/scripts
+  - type: bind
+    source: ./superset_home
+    target: /app/superset_home
+  - type: bind
+    source: ./config
+    target: /app/config
+x-superset-env_file: &env_file
+  - ./.env
+
 services:
   postgres:
     image: postgres:14-alpine
-    container_name: household_db
+    container_name: postgres_prod
     restart: unless-stopped
-    cpus: '0.5'
-    environment:
-      POSTGRES_DB: household
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=C"
+    cpus: '1.0'
+    env_file: *env_file
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
+      - ./superset/docker/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d
     ports:
       - "5432:5432"
     command: >
       postgres
       -c shared_buffers=128MB
       -c effective_cache_size=256MB
-      -c maintenance_work_mem=32MB
-      -c checkpoint_completion_target=0.9
-      -c wal_buffers=16MB
-      -c default_statistics_target=100
-      -c random_page_cost=1.1
-      -c effective_io_concurrency=200
-      -c work_mem=4MB
-      -c min_wal_size=1GB
-      -c max_wal_size=4GB
+      -c work_mem=8MB
+      -c maintenance_work_mem=64MB
+    networks:
+      - houseaccount_network
 
-  app:
-    build: ./docker
-    container_name: household_app
+  ledger_ingest:
+    build:
+      context: .
+      dockerfile: ledger_ingest/docker/Dockerfile
+    container_name: ledger_ingest_prod
     restart: unless-stopped
-    user: superset
-    cpus: '1.0'
-    environment:
-      - HOME=/app
-      - SUPERSET_HOME=/app/superset
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/household
-      # - PYTHONPATH=/app/ledger_ingest
-      - SUPERSET_SECRET_KEY=${SUPERSET_SECRET_KEY}
-      - vscode-cache:/home/superset/.vscode-server/
+    cpus: '2.0'
+    env_file: *env_file
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
+      - ./logs:/app/logs
+    working_dir: /app
+    networks:
+      - houseaccount_network
+
+  redis:
+    image: redis:7
+    container_name: superset_cache_prod
+    restart: unless-stopped
+    cpus: '0.5'
+    volumes:
+      - ./redis:/data
+    networks:
+      - houseaccount_network
+
+  superset:
+    image: *superset-image
+    command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
+    container_name: superset_prod
+    restart: unless-stopped
+    cpus: '2.0'
+    env_file: *env_file
     ports:
       - "8088:8088"
     depends_on:
-      - postgres
-      - redis
-    volumes:
-      - .:/app
-      - ./data:/app/data
-      - ./ledger_ingest:/app/ledger_ingest
-    working_dir: /app
+      superset-init:
+        condition: service_completed_successfully
+    volumes: *superset-volumes
+    networks:
+      - houseaccount_network
+  
+  superset-init:
+    image: *superset-image
+    container_name: superset_init_prod
+    command: ["/app/docker/docker-init.sh"]
+    env_file: *env_file
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+    volumes: *superset-volumes
+    networks:
+      - houseaccount_network
+    healthcheck:
+      disable: true
 
-  redis:
-    image: redis:7-alpine
-    container_name: household_redis
+  superset-worker:
+    image: *superset-image
+    container_name: superset_worker_prod
+    command: ["/app/docker/docker-bootstrap.sh", "worker"]
+    env_file: *env_file
     restart: unless-stopped
-    ports:
-      - "6379:6379"
-    volumes:
-      - ./data/redis:/data
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+    volumes: *superset-volumes
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "celery -A superset.tasks.celery_app:app inspect ping -d celery@$$HOSTNAME",
+        ]
+    networks:
+      - houseaccount_network
+
+  superset-worker-beat:
+    image: *superset-image
+    container_name: superset_worker_beat_prod
+    command: ["/app/docker/docker-bootstrap.sh", "beat"]
+    env_file: *env_file
+    restart: unless-stopped
+    depends_on:
+      superset-init:
+        condition: service_completed_successfully
+    volumes: *superset-volumes
+    networks:
+      - houseaccount_network
+    healthcheck:
+      disable: true
+
+networks:
+  houseaccount_network:
+    driver: bridge
 
 volumes:
-  superset-vscode:
+  postgres_data:
+    external: false
+  redis:
+    external: false
+  superset_home:
+    external: false

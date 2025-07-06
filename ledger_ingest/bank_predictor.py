@@ -13,12 +13,10 @@ import unicodedata
 import pykakasi
 import jaconv
 from .database import DatabaseManager
+from .config import get_logger
 from sqlalchemy import text
 
-import logging
-
-logging.basicConfig(level=logging.ERROR)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class BankPredictor:
     """

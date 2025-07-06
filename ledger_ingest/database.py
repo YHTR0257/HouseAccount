@@ -55,7 +55,7 @@ class DatabaseManager:
             autoflush=False
         )
         
-        logging.basicConfig(level=getattr(logging, config.log_level))
+        # ロガー設定は config.setup_logging() で一元管理されるため、ここでは設定しない
         logger.info(f"Database initialized: {config.database_url}")
     
     @property
@@ -105,6 +105,9 @@ class DatabaseManager:
                 )
             """))
             
+            # confirmed_atカラムが存在しない場合に追加
+            self._add_confirmed_at_column_if_missing(conn)
+            
             conn.execute(text("""
                 CREATE OR REPLACE VIEW account_balances AS
                 SELECT
@@ -147,6 +150,32 @@ class DatabaseManager:
             
             conn.commit()
             logger.info("データベーステーブルとビューを作成しました")
+    
+    def _add_confirmed_at_column_if_missing(self, conn: Connection) -> None:
+        """confirmed_atカラムが存在しない場合に追加"""
+        try:
+            # カラムが存在するかチェック
+            result = conn.execute(text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'journal_entries' 
+                AND column_name = 'confirmed_at'
+            """))
+            
+            # fetchone()を使用してチェック
+            column_exists = result.fetchone() is not None
+            
+            if not column_exists:
+                # カラムが存在しない場合は追加
+                conn.execute(text("""
+                    ALTER TABLE journal_entries 
+                    ADD COLUMN confirmed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                """))
+                logger.info("confirmed_atカラムを追加しました")
+            else:
+                logger.info("confirmed_atカラムは既に存在します")
+        except Exception as e:
+            logger.error(f"confirmed_atカラムの確認・追加に失敗: {e}")
     
     def test_connection(self) -> bool:
         try:
